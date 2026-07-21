@@ -1,0 +1,60 @@
+{
+  "name": "bot-observability",
+  "version": "0.1.0",
+  "description": "A web dashboard for monitoring and analyzing bot/crawler traffic — AI training crawlers, search engines, SEO tools, and more — across web projects.",
+  "keywords": [
+    "bot-detection",
+    "crawler",
+    "analytics",
+    "ai-crawlers",
+    "observability",
+    "nextjs",
+    "postgres"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vesivanov/bot-observability.git"
+  },
+  "bugs": {
+    "url": "https://github.com/vesivanov/bot-observability/issues"
+  },
+  "homepage": "https://github.com/vesivanov/bot-observability",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "migrate": "node scripts/migrate.mjs",
+    "reconcile-rollups": "node scripts/reconcile-rollups.mjs",
+    "test": "vitest run",
+    "test:unit": "vitest run src",
+    "test:integration": "vitest run test/integration"
+  },
+  "dependencies": {
+    "next": "16.2.10",
+    "postgres": "^3.4.9",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "recharts": "^3.8.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.10",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "next": {
+      "postcss": "8.5.19"
+    }
+  }
+}
