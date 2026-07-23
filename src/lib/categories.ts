@@ -16,6 +16,9 @@ export const AI_SEARCH_BOTS = new Set([
   "DuckAssistBot",
   "YouBot",
   "Cloudflare-AI-Search",
+  "PhindBot",
+  "Andibot",
+  "Grok-DeepSearch",
   // Per Meta's docs, Meta-WebIndexer is an AI-search index crawler (peer of
   // OAI-SearchBot/Claude-SearchBot), not a training crawler — see bots.ts.
   "meta-webindexer",
@@ -25,8 +28,10 @@ export const AI_AGENT_BOTS = new Set([
   "ChatGPT-User",
   "Claude-User",
   "Claude-Web",
+  "claude-code",
   "Perplexity-User",
   "GoogleAgent",
+  "Google-NotebookLM",
   "MistralAI-User",
   // Meta's user-triggered, on-demand fetcher (peer of ChatGPT-User /
   // Claude-User / Perplexity-User) — see bots.ts.
