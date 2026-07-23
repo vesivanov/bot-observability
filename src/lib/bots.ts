@@ -9,6 +9,23 @@ export interface BotMatch {
 // Exported (in addition to detectBot) so tests can enumerate every known
 // bot name/category pairing without duplicating the list — see
 // src/lib/bot-companies.test.ts's BOT_COMPANY completeness check.
+//
+// ── How to classify ai_training / ai_search / ai_agent ──────────────────
+// The bar is: the OPERATING COMPANY'S OWN documentation says THIS SPECIFIC
+// bot trains models (ai_training), builds an index that feeds AI-generated
+// answers/citations (ai_search), or performs an on-demand, user-triggered,
+// single-page fetch (ai_agent). "This company makes AI products elsewhere"
+// is not evidence for any of the three — most companies' primary crawler is
+// just a plain search-index bot even when the company is otherwise an AI
+// business. When you can't point to the operator's own docs stating one of
+// the three purposes above for THIS bot, categorize it by what it actually
+// does instead (search_crawler / seo_crawler / social_preview / generic).
+// This is exactly the mistake this file used to make: KagiBot, PetalBot, and
+// Google-CloudVertexBot were all tagged ai_search/ai_training on "the
+// operator does AI stuff" reasoning, when their own docs describe them as
+// general search-index or owner-initiated agent-building crawlers — not
+// bots that train models or feed AI answers. All three were corrected;
+// don't reintroduce the pattern.
 export const PATTERNS: BotMatch[] = [
   // ══════════════════════════════════════════════════════════
   //  AI crawlers — training, search retrieval, on-demand agents
@@ -19,6 +36,9 @@ export const PATTERNS: BotMatch[] = [
   { name: "GPTBot", category: "ai_training", pattern: /GPTBot/i },
   { name: "ChatGPT-User", category: "ai_agent", pattern: /ChatGPT-User/i },
   { name: "OAI-SearchBot", category: "ai_search", pattern: /OAI-SearchBot/i },
+  // Ad-landing-page checker for ChatGPT ads — not a training or search crawler,
+  // just ad-policy compliance.
+  { name: "OAI-AdsBot", category: "generic", pattern: /OAI-AdsBot/i },
 
   // ── Anthropic ─────────────────────────────────────────
   { name: "ClaudeBot", category: "ai_training", pattern: /ClaudeBot/i },
@@ -46,8 +66,33 @@ export const PATTERNS: BotMatch[] = [
   // requests to Google itself.
   { name: "Google-Cloud-Vertex", category: "ai_training", pattern: /Google-Cloud-Vertex/i },
   { name: "Gemini-Deep-Research", category: "ai_search", pattern: /Gemini-Deep-Research/i },
-  { name: "GoogleAgent", category: "ai_agent", pattern: /GoogleAgent/i },
+  // Must precede GoogleAgent below — "GoogleAgent-URLContext" contains
+  // "GoogleAgent" as a substring. Fetches a URL a developer supplied as
+  // context to the Gemini API, on the API caller's behalf. (No official
+  // Google doc confirms this token, but it's independently listed by two
+  // unrelated bot-tracking services beyond the community registry.)
+  { name: "GoogleAgent-URLContext", category: "ai_agent", pattern: /GoogleAgent-URLContext/i },
+  // Google's official token is the hyphenated "Google-Agent" (see Google's
+  // user-triggered-fetchers docs). "GoogleAgent" (no hyphen) is kept as a fallback
+  // in case of variant UAs, but the hyphenated form is the real one — without it,
+  // every user-triggered-agent request was invisible (fell through to null, not
+  // even caught as a generic bot). NB: a "GoogleAgent-Mariner" variant was
+  // previously added here based on third-party mentions of Google's Project
+  // Mariner, but no official Google source ever confirmed that literal token,
+  // and Mariner itself was discontinued by Google on 2026-05-04 — removed.
+  { name: "GoogleAgent", category: "ai_agent", pattern: /Google-Agent|GoogleAgent/i },
   { name: "Google-NotebookLM", category: "ai_agent", pattern: /Google-NotebookLM/i },
+  // Current token for Gemini Notebook — Google-NotebookLM above is now legacy and
+  // loses support in August 2026 per Google's docs.
+  { name: "Google-GeminiNotebook", category: "ai_agent", pattern: /Google-GeminiNotebook/i },
+  // Per Google's own crawler docs, this is "crawls requested by site owners
+  // for building Vertex AI Agents" — an opt-in, owner-initiated crawl of the
+  // owner's own site. That's not "trains Gemini" (Google-Extended's job) or
+  // an on-demand end-user fetch (GoogleAgent's job), so it doesn't cleanly
+  // fit ai_training/ai_search/ai_agent; categorized generic rather than
+  // asserting a training purpose the source doesn't state (same reasoning as
+  // GoogleOther above).
+  { name: "Google-CloudVertexBot", category: "generic", pattern: /Google-CloudVertexBot/i },
 
   // ── Perplexity / Phind / Andi ──────────────────────────
   { name: "PerplexityBot", category: "ai_search", pattern: /PerplexityBot/i },
@@ -87,6 +132,9 @@ export const PATTERNS: BotMatch[] = [
   { name: "Diffbot", category: "ai_training", pattern: /Diffbot/i },
   { name: "ImagesiftBot", category: "ai_training", pattern: /ImagesiftBot/i },
   { name: "DeepSeekBot", category: "ai_training", pattern: /DeepSeekBot/i },
+  // Must precede the parent AI2Bot pattern below — already caught by it, but a
+  // dedicated entry gives correct attribution for the Dolma-dataset variant.
+  { name: "Ai2Bot-Dolma", category: "ai_training", pattern: /Ai2Bot-Dolma/i },
   { name: "AI2Bot", category: "ai_training", pattern: /AI2Bot/i },
   { name: "MistralBot", category: "ai_training", pattern: /MistralBot/i },
   { name: "MistralAI-User", category: "ai_agent", pattern: /MistralAI-User/i },
@@ -105,6 +153,32 @@ export const PATTERNS: BotMatch[] = [
   { name: "Groq-Bot", category: "ai_training", pattern: /Groq-?Bot/i },
   { name: "Webzio", category: "ai_training", pattern: /Webzio/i },
   { name: "Character-AI", category: "ai_training", pattern: /Character-AI/i },
+  // Kagi's own docs (kagi.com/bot) confirm this is their general search-index
+  // crawler — the peer of Googlebot/Bingbot for Kagi Search, not a bot that
+  // feeds AI-generated answers. Categorized search_crawler, not ai_search.
+  // (kagi-fetcher below is the actual AI-answer/on-demand bot.)
+  { name: "KagiBot", category: "search_crawler", pattern: /Kagibot/i },
+  // Kagi's own docs confirm this fetches web content on-demand to answer a
+  // Kagi Assistant (AI) user's query — the genuine AI counterpart to KagiBot.
+  { name: "kagi-fetcher", category: "ai_agent", pattern: /kagi-fetcher/i },
+  { name: "KimiBot", category: "ai_training", pattern: /KimiBot/i },
+  { name: "Kimi-User", category: "ai_agent", pattern: /Kimi-User/i },
+  { name: "TavilyBot", category: "ai_search", pattern: /TavilyBot/i },
+  { name: "ICC-Crawler", category: "ai_training", pattern: /ICC-Crawler/i },
+  { name: "PanguBot", category: "ai_training", pattern: /PanguBot/i },
+  // Version-suffixed to avoid overly broad matching on the bare word "Devin".
+  { name: "Devin", category: "ai_agent", pattern: /Devin\/\d/i },
+  // Verified token is the hyphenated "Manus-User" (operated by Butterfly
+  // Effect) — no evidence a literal "Manus Bot" UA exists.
+  { name: "Manus-User", category: "ai_agent", pattern: /Manus-User/i },
+  // A second, distinct ByteDance training crawler alongside Bytespider.
+  { name: "TikTokSpider", category: "ai_training", pattern: /TikTokSpider/i },
+  // Amazon's browser-using AI agent (distinct from the Amazonbot training crawler).
+  { name: "NovaAct", category: "ai_agent", pattern: /NovaAct/i },
+  // Fetches web content for Alibaba's Tongyi Qianwen / Qwen assistant answers.
+  { name: "TongyiBot", category: "ai_search", pattern: /TongyiBot/i },
+  // Fetches web content for Baidu's Yiyan (ERNIE) assistant answers.
+  { name: "YiyanBot", category: "ai_search", pattern: /YiyanBot/i },
 
   // ══════════════════════════════════════════════════════════
   //  Search engine crawlers
@@ -183,7 +257,13 @@ export const PATTERNS: BotMatch[] = [
   // ══════════════════════════════════════════════════════════
   //  Other known crawlers
   // ══════════════════════════════════════════════════════════
-  { name: "PetalBot", category: "generic", pattern: /PetalBot/i },
+  // Huawei's Petal Search crawler — its own webmaster docs describe it as a
+  // general search-index crawler (peer of Googlebot/Bingbot for Petal
+  // Search), not one that's documented as feeding AI-generated answers.
+  // Previously reclassified to ai_search on "Petal Search is AI-powered"
+  // reasoning alone — the same company-level inference that miscategorized
+  // KagiBot; reverted to search_crawler.
+  { name: "PetalBot", category: "search_crawler", pattern: /PetalBot/i },
   { name: "AdsBot", category: "generic", pattern: /AdsBot-Google/i },
   { name: "Scrapy", category: "generic", pattern: /Scrapy/i },
   { name: "axios", category: "generic", pattern: /\baxios\/\d/i },
