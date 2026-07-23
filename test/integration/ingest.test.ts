@@ -107,8 +107,14 @@ describe.skipIf(!url)("insertHit", () => {
 
     expect(new Date(firstSeenRow.last_seen).getTime()).toBe(new Date(max_real_created_at).getTime());
     // The heartbeat was inserted after the 4 real hits but must not have
-    // bumped last_seen past it.
-    expect(new Date(firstSeenRow.last_seen).getTime()).toBeLessThan(new Date(heartbeat_created_at).getTime());
+    // bumped last_seen past it. created_at has millisecond resolution, so a
+    // fast enough run can legitimately land the heartbeat in the same
+    // millisecond as the last real hit — toBeLessThanOrEqual avoids that
+    // false negative. The exact-equality check above (last_seen ==
+    // max_real_created_at, which excludes the heartbeat by construction) is
+    // what actually proves the heartbeat didn't bump last_seen; this is
+    // belt-and-suspenders on top of it, not the primary guarantee.
+    expect(new Date(firstSeenRow.last_seen).getTime()).toBeLessThanOrEqual(new Date(heartbeat_created_at).getTime());
   });
 
   it("weights sample_rate so a sampled row counts as ~1/sample_rate real hits", async () => {

@@ -28,7 +28,8 @@ import type {
   NewBot,
 } from "./schema";
 import { statusClassOf } from "./schema";
-import { normalizeBotCategory, AI_AGENT_BOTS, AI_SEARCH_BOTS } from "./categories";
+import { normalizeBotCategory, AI_AGENT_BOTS, AI_SEARCH_BOTS, MONITORING_BOTS } from "./categories";
+import { PATTERNS } from "./bots";
 
 // A raw bot_hits row can represent more than one real hit when the ingest
 // side applies sampling (route.ts clamps sample_rate to [0.001, 1] and
@@ -41,8 +42,9 @@ const HIT_WEIGHT_SQL = "1.0/NULLIF(sample_rate,0)";
 // Appends a category filter to `values` and returns the SQL clause referencing it.
 // The pseudo-category "ai" matches all ai_* raw categories via LIKE; any other
 // category matches the raw stored bot_category exactly — except for specific AI
-// sub-categories (ai_agent / ai_search / ai_training) which ALSO match legacy
-// ai_crawler rows that normalizeBotCategory would remap to that category.
+// sub-categories (ai_agent / ai_search / ai_training), which ALSO match legacy
+// ai_crawler rows, and "monitoring", which ALSO matches legacy generic rows —
+// both cases mirror the remap normalizeBotCategory does at read time.
 function categoryFilterSql(category: string | undefined, values: (string | number)[]): string {
   if (!category) return "";
   if (category === "ai") {
@@ -62,6 +64,10 @@ function categoryFilterSql(category: string | undefined, values: (string | numbe
     const names = allKnown.map((n) => `'${n}'`).join(",");
     return `AND (bot_category = 'ai_training' OR (bot_category = 'ai_crawler' AND bot_name NOT IN (${names})))`;
   }
+  if (category === "monitoring") {
+    const names = Array.from(MONITORING_BOTS).map((n) => `'${n}'`).join(",");
+    return `AND (bot_category = 'monitoring' OR (bot_category = 'generic' AND bot_name IN (${names})))`;
+  }
   values.push(category);
   return `AND bot_category = $${values.length}`;
 }
@@ -70,7 +76,17 @@ function categoryFilterSql(category: string | undefined, values: (string | numbe
 // company-mapping in src/lib/bot-companies.ts and the legacy remap sets in
 // src/lib/categories.ts. Used by the "AI crawls vs. visits" and AI per-bot
 // breakdown panels to scope raw/rollup rows to the AI subspace.
-const AI_BOT_NAMES_SQL = `'AI2Bot','Amazonbot','Andibot','Anthropic','Applebot-Extended','Bytespider','CCBot','Character-AI','ChatGPT-User','claude-code','Claude-SearchBot','Claude-User','Claude-Web','Cloudflare-AI-Search','Cohere','DeepSeekBot','Diffbot','DuckAssistBot','FacebookBot','FirecrawlAgent','Gemini-Deep-Research','GLM-Spider','Google-Cloud-Vertex','Google-Extended','Google-NotebookLM','GoogleAgent','GPTBot','Grok-DeepSearch','GrokBot','Groq-Bot','HuggingFaceBot','ImagesiftBot','KangarooBot','magpie-crawler','Meta-ExternalAgent','Meta-ExternalFetcher','meta-webindexer','MistralAI-User','MistralBot','OAI-SearchBot','OmgiliBot','Perplexity-User','PerplexityBot','PhindBot','ResearchBot','SeekrBot','Timpibot','VelenPublicBot','Webzio','xAI-Bot','YouBot'`;
+//
+// Derived from PATTERNS rather than hand-maintained: a hand-maintained copy
+// previously drifted out of sync (missing ClaudeBot — Anthropic's own
+// training crawler — despite PATTERNS having it) with nothing to catch it.
+// Deriving it here means every ai_training/ai_search/ai_agent bot in
+// PATTERNS is automatically covered, permanently.
+const AI_BOT_NAMES_SQL = Array.from(new Set(
+  PATTERNS
+    .filter((p) => p.category === "ai_training" || p.category === "ai_search" || p.category === "ai_agent")
+    .map((p) => p.name)
+)).map((name) => `'${name}'`).join(",");
 const AI_CAT_SQL = `'ai_training','ai_search','ai_agent','ai_crawler'`;
 
 export function createDbClient(databaseUrl: string) {

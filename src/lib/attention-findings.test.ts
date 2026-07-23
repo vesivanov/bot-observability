@@ -131,7 +131,69 @@ describe("buildAttentionFindings", () => {
     });
 
     const findings = buildAttentionFindings({ current, previous, trendPercent: 60, period: "7" });
-    expect(findings.length).toBeLessThanOrEqual(4);
     expect(findings).toHaveLength(4);
+  });
+});
+
+describe("traffic-trend finding", () => {
+  // These isolate the finding from the "caps at 4" test above, which only
+  // ever exercises it bundled with 3 others — a regression that broke this
+  // condition alone (but left the others intact) wouldn't necessarily change
+  // that test's total count.
+  it("flags a swing >=50% when the previous period had >=100 hits", () => {
+    const current = stats({ total: 150 });
+    const previous = stats({ total: 100 });
+    const findings = buildAttentionFindings({ current, previous, trendPercent: 50, period: "7" });
+    expect(findings).toHaveLength(1);
+    expect(findings[0].key).toBe("traffic-trend");
+  });
+
+  it("does not flag a swing just under the 50% threshold", () => {
+    const current = stats({ total: 149 });
+    const previous = stats({ total: 100 });
+    const findings = buildAttentionFindings({ current, previous, trendPercent: 49, period: "7" });
+    expect(findings).toEqual([]);
+  });
+
+  it("does not flag any swing when the previous period had under 100 hits", () => {
+    const current = stats({ total: 150 });
+    const previous = stats({ total: 99 });
+    const findings = buildAttentionFindings({ current, previous, trendPercent: 200, period: "7" });
+    expect(findings).toEqual([]);
+  });
+});
+
+describe("ai-share finding", () => {
+  // Isolated for the same reason as the traffic-trend block above.
+  it("flags AI share >=10% that is at least 1.5x the previous period's share", () => {
+    // total: 200 with counts 75/50 keeps both shares (0.375/0.25) and their
+    // 1.5x product exact in floating point, so this genuinely tests the
+    // >= boundary rather than incidental float rounding.
+    const current = stats({ total: 200, categories: [{ bot_category: "ai_training", count: 75 }] }); // 37.5%
+    const previous = stats({ total: 200, categories: [{ bot_category: "ai_training", count: 50 }] }); // 25% -> exactly 1.5x
+    const findings = buildAttentionFindings({ current, previous, trendPercent: null, period: "7" });
+    expect(findings).toHaveLength(1);
+    expect(findings[0].key).toBe("ai-share");
+  });
+
+  it("does not flag when the current AI share is under the 10% floor", () => {
+    const current = stats({ total: 100, categories: [{ bot_category: "ai_training", count: 9 }] }); // 9%
+    const previous = stats({ total: 100, categories: [{ bot_category: "ai_training", count: 1 }] }); // 1% -> 9x, but current < 10%
+    const findings = buildAttentionFindings({ current, previous, trendPercent: null, period: "7" });
+    expect(findings).toEqual([]);
+  });
+
+  it("does not flag when the current share is less than 1.5x the previous share", () => {
+    const current = stats({ total: 100, categories: [{ bot_category: "ai_training", count: 14 }] }); // 14%
+    const previous = stats({ total: 100, categories: [{ bot_category: "ai_training", count: 10 }] }); // 10% -> 1.4x
+    const findings = buildAttentionFindings({ current, previous, trendPercent: null, period: "7" });
+    expect(findings).toEqual([]);
+  });
+
+  it("does not flag when the previous period had zero AI share (no baseline to compare against)", () => {
+    const current = stats({ total: 100, categories: [{ bot_category: "ai_training", count: 20 }] }); // 20%
+    const previous = stats({ total: 100, categories: [] }); // 0%
+    const findings = buildAttentionFindings({ current, previous, trendPercent: null, period: "7" });
+    expect(findings).toEqual([]);
   });
 });

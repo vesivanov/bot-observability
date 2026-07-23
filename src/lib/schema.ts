@@ -6,6 +6,7 @@ export type BotCategory =
   | "search_crawler"
   | "seo_crawler"
   | "social_preview"
+  | "monitoring"
   | "generic"
   | "unknown";
 

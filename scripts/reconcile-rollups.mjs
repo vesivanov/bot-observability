@@ -53,7 +53,12 @@ async function main() {
                   WHEN status_code >= 400 AND status_code < 500 THEN '4xx'
                   WHEN status_code >= 500 THEN '5xx' ELSE 'unknown' END,
              ROUND(SUM(1.0/NULLIF(sample_rate,0))),
-             ROUND(SUM(1.0/NULLIF(sample_rate,0)) FILTER (WHERE confidence = 'verified'))
+             -- COALESCE guards a bucket with zero verified rows: SUM(...)
+             -- FILTER (WHERE ...) returns NULL (not 0) when nothing matches
+             -- the filter, and verified_hits is NOT NULL — without this,
+             -- rebuilding any all-ua_only bucket (a common case, e.g. most
+             -- error-status buckets) crashes the whole reconcile.
+             COALESCE(ROUND(SUM(1.0/NULLIF(sample_rate,0)) FILTER (WHERE confidence = 'verified')), 0)
       FROM bot_hits WHERE heartbeat = FALSE
       GROUP BY 1, 2, 3, 4, 5
       ON CONFLICT (day, project_name, bot_name, bot_category, status_class)

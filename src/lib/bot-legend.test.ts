@@ -63,4 +63,17 @@ describe("getBotLegend", () => {
     expect(legend).not.toBeNull();
     expect(legend!.groupLabel).toBe("AI Search");
   });
+
+  it("resolves the monitoring bots promoted out of Generic under the Monitoring group", () => {
+    // Regression guard for the "generic" -> "monitoring" category split: a
+    // revert that put these back under Generic/CLI would still pass the
+    // "every PATTERNS name resolves" test above, since Generic is also a
+    // valid group — only an assertion on the specific group catches it.
+    const names = ["Pingdom", "UptimeRobot", "Datadog", "NewRelic", "GTmetrix", "WebPageTest"];
+    for (const name of names) {
+      const legend = getBotLegend(name);
+      expect(legend, `expected a legend entry for ${name}`).not.toBeNull();
+      expect(legend!.groupLabel).toBe("Monitoring");
+    }
+  });
 });

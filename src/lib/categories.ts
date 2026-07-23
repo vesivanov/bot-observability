@@ -38,6 +38,20 @@ export const AI_AGENT_BOTS = new Set([
   "Meta-ExternalFetcher",
 ]);
 
+// LEGACY-ROW-REMAP ONLY, same reasoning as AI_SEARCH_BOTS/AI_AGENT_BOTS
+// above: these 6 bots were promoted out of "generic" into their own
+// "monitoring" category, but rows ingested before that change are still
+// stored with bot_category = "generic". normalizeBotCategory remaps them at
+// read time so historical data doesn't need a DB backfill.
+export const MONITORING_BOTS = new Set([
+  "Pingdom",
+  "UptimeRobot",
+  "Datadog",
+  "NewRelic",
+  "GTmetrix",
+  "WebPageTest",
+]);
+
 export const CATEGORY_ORDER = [
   "ai_training",
   "ai_search",
@@ -46,6 +60,7 @@ export const CATEGORY_ORDER = [
   "search_crawler",
   "seo_crawler",
   "social_preview",
+  "monitoring",
   "generic",
   "unknown",
 ] as const;
@@ -138,6 +153,17 @@ export const CATEGORY_META: Record<string, {
     bg: "bg-fuchsia-400",
     fill: "rgba(232, 121, 249, VAR)",
   },
+  monitoring: {
+    label: "Monitoring",
+    shortLabel: "Monitoring",
+    color: "#4d7c0f",
+    chip: "border-lime-800/60 bg-lime-950/30 text-lime-300",
+    bar: "bg-lime-700",
+    dot: "bg-lime-600",
+    text: "text-lime-400",
+    bg: "bg-lime-700",
+    fill: "rgba(77, 124, 15, VAR)",
+  },
   generic: {
     label: "Generic",
     shortLabel: "Generic",
@@ -163,6 +189,7 @@ export const CATEGORY_META: Record<string, {
 };
 
 export function normalizeBotCategory(botName: string, category: string): BotCategory {
+  if (category === "generic" && MONITORING_BOTS.has(botName)) return "monitoring";
   if (category !== "ai_crawler") return category as BotCategory;
   if (AI_AGENT_BOTS.has(botName)) return "ai_agent";
   if (AI_SEARCH_BOTS.has(botName)) return "ai_search";
