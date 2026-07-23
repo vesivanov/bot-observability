@@ -27,9 +27,16 @@ export const BOT_COMPANY: Record<string, string> = {
   // callers may look up its company regardless of category.
   GoogleOther: "Google",
   "Google-Cloud-Vertex": "Google",
+  // Google-CloudVertexBot's bots.ts category is `generic` too (see bots.ts —
+  // its documented purpose is owner-initiated agent-building crawls, not
+  // model training), so like GoogleOther it's outside the ai_* completeness
+  // set but kept here since it's still a genuine Google-operated crawler.
+  "Google-CloudVertexBot": "Google",
   "Gemini-Deep-Research": "Google",
   GoogleAgent: "Google",
+  "GoogleAgent-URLContext": "Google",
   "Google-NotebookLM": "Google",
+  "Google-GeminiNotebook": "Google",
 
   // Meta
   "Meta-ExternalAgent": "Meta",
@@ -74,6 +81,7 @@ export const BOT_COMPANY: Record<string, string> = {
 
   // Allen Institute for AI
   AI2Bot: "Allen Institute for AI",
+  "Ai2Bot-Dolma": "Allen Institute for AI",
 
   // Mistral
   MistralBot: "Mistral",
@@ -124,6 +132,48 @@ export const BOT_COMPANY: Record<string, string> = {
 
   // DuckDuckGo
   DuckAssistBot: "DuckDuckGo",
+
+  // Kagi (KagiBot is search_crawler now, not ai_*, but kept for lookup —
+  // same reasoning as GoogleOther above)
+  KagiBot: "Kagi",
+  "kagi-fetcher": "Kagi",
+
+  // Moonshot AI (Kimi)
+  KimiBot: "Moonshot AI",
+  "Kimi-User": "Moonshot AI",
+
+  // Tavily
+  TavilyBot: "Tavily",
+
+  // NICT (Japan)
+  "ICC-Crawler": "NICT",
+
+  // Huawei (PetalBot is search_crawler now, not ai_*, but kept for lookup —
+  // same reasoning as GoogleOther above)
+  PanguBot: "Huawei",
+  PetalBot: "Huawei",
+
+  // Cognition AI
+  Devin: "Cognition AI",
+
+  // Manus (Butterfly Effect)
+  "Manus-User": "Manus",
+
+  // ByteDance (additional training crawler, alongside Bytespider)
+  TikTokSpider: "ByteDance",
+
+  // Amazon
+  NovaAct: "Amazon",
+
+  // Alibaba
+  TongyiBot: "Alibaba",
+
+  // Baidu
+  YiyanBot: "Baidu",
+
+  // OpenAI (ad-policy crawler, not part of the ai_* completeness set, but
+  // mapped anyway for consistent company lookups)
+  "OAI-AdsBot": "OpenAI",
 };
 
 export function botCompany(name: string): string {

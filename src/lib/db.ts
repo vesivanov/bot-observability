@@ -172,8 +172,11 @@ export function createDbClient(databaseUrl: string) {
       values.push(params.project);
     }
     if (params.category) {
-      conditions.push(`bot_category = $${paramIndex++}`);
-      values.push(params.category);
+      const categoryClause = categoryFilterSql(params.category, values);
+      if (categoryClause) {
+        conditions.push(categoryClause.replace(/^AND\s+/, ""));
+        paramIndex = values.length + 1;
+      }
     }
     if (params.confidence) {
       conditions.push(`confidence = $${paramIndex++}`);
@@ -514,6 +517,12 @@ export function createDbClient(databaseUrl: string) {
   async function fetchStatusBatch(from: Date, to: Date, project?: string, category?: string) {
     const scLimit = 12;
     const otherLimit = 16;
+    // bot_status_codes groups by (bot_name, bot_category, status_code) and is
+    // merged in JS by normalized category afterward — a bot with both
+    // ai_agent and legacy ai_crawler rows consumes 2 pre-merge slots but
+    // collapses to 1 post-merge, so double the raw SQL limit to compensate
+    // (mirrors the LIMIT * 2 pattern in allBotDetails).
+    const botScLimit = otherLimit * 2;
     const values: (string | number)[] = [from.toISOString(), to.toISOString()];
     let projectClause = "";
     if (project) {
@@ -639,7 +648,7 @@ export function createDbClient(databaseUrl: string) {
         FROM base_scode b
         LEFT JOIN bsc_proj_rank pr ON pr.bot_name = b.bot_name AND pr.bot_category = b.bot_category AND pr.status_code = b.status_code AND pr.rank = 1
         LEFT JOIN bsc_path_rank pa ON pa.bot_name = b.bot_name AND pa.bot_category = b.bot_category AND pa.status_code = b.status_code AND pa.rank = 1
-        GROUP BY b.bot_name, b.bot_category, b.status_code ORDER BY count DESC, b.bot_name, b.status_code LIMIT ${otherLimit}
+        GROUP BY b.bot_name, b.bot_category, b.status_code ORDER BY count DESC, b.bot_name, b.status_code LIMIT ${botScLimit}
       ),
       psc_bot_rank AS (
         SELECT project_name, path, status_code, bot_name, ROW_NUMBER() OVER (PARTITION BY project_name, path, status_code ORDER BY COUNT(*) DESC, bot_name) AS rank
@@ -843,8 +852,12 @@ export function createDbClient(databaseUrl: string) {
         FROM base
       ),
       top_bots AS (
+        -- Grouped by (bot_name, bot_category) and merged in JS by normalized
+        -- category afterward (topBotsTotals below) — double the raw limit so
+        -- a bot split across ai_agent/legacy ai_crawler rows doesn't lose a
+        -- slot to its own pre-merge duplicate (mirrors allBotDetails' LIMIT * 2).
         SELECT bot_name, bot_category, ROUND(SUM(${HIT_WEIGHT_SQL}))::int as count
-        FROM base GROUP BY bot_name, bot_category ORDER BY count DESC LIMIT 10
+        FROM base GROUP BY bot_name, bot_category ORDER BY count DESC LIMIT 20
       ),
       top_pages AS (
         SELECT path, ROUND(SUM(${HIT_WEIGHT_SQL}))::int as count
@@ -867,13 +880,15 @@ export function createDbClient(databaseUrl: string) {
         FROM base GROUP BY bot_name, bot_category ORDER BY count DESC
       ),
       bot_conf_all AS (
+        -- Same pre-merge/post-merge mismatch as top_bots above — double the
+        -- raw limit to compensate.
         SELECT bot_name, bot_category,
           ROUND(SUM(${HIT_WEIGHT_SQL}))::int as total_hits,
           ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified'))::int as verified_hits,
           ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'ua_only'))::int as ua_only_hits,
           STRING_AGG(DISTINCT project_name, ', ' ORDER BY project_name) as projects,
           MAX(created_at)::text as last_seen
-        FROM base GROUP BY bot_name, bot_category ORDER BY total_hits DESC LIMIT 10
+        FROM base GROUP BY bot_name, bot_category ORDER BY total_hits DESC LIMIT 20
       ),
       bot_conf_ai AS (
         SELECT bot_name, bot_category,
@@ -1107,6 +1122,8 @@ export function createDbClient(databaseUrl: string) {
         FROM base GROUP BY bot_name, bot_category
       ),
       top_bots AS (
+        -- Same pre-merge/post-merge mismatch as fetchStatsBatch's top_bots —
+        -- double the raw limit to compensate.
         SELECT b.bot_name, b.bot_category,
           SUM(b.hits)::int AS total_hits,
           SUM(b.verified_hits)::int AS verified_hits,
@@ -1114,7 +1131,7 @@ export function createDbClient(databaseUrl: string) {
         FROM base b
         LEFT JOIN bot_first_seen bfs ON bfs.bot_name = b.bot_name
         GROUP BY b.bot_name, b.bot_category
-        ORDER BY total_hits DESC LIMIT 10
+        ORDER BY total_hits DESC LIMIT 20
       ),
       -- neo-mirror of fetchStatsBatch.bot_conf_ai: per-bot AI aggregation
       -- scoped by the chip filter (base) for the AI per-bot breakdown panel.

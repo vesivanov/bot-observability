@@ -36,19 +36,20 @@ export const LEGEND_GROUPS: LegendGroup[] = [
     subs: [
       { label: "OpenAI", examples: "GPTBot", what: "Feeds ChatGPT / GPT model training. Blocking keeps your content out of OpenAI future models." },
       { label: "Anthropic", examples: "ClaudeBot, anthropic-ai", what: "Feeds Claude model training. Blocking prevents use in Anthropic's training pipeline." },
-      { label: "Google", examples: "Google-Extended, Google-Cloud-Vertex", what: "Feeds Gemini / Vertex AI training. Google-Extended is a robots.txt policy token (no separate UA). Blocking does NOT affect Google Search. (GoogleOther is a separate, undocumented-purpose crawler — see Generic / CLI below.)" },
+      { label: "Google", examples: "Google-Extended, Google-Cloud-Vertex", what: "Feeds Gemini / Vertex AI training. Google-Extended is a robots.txt policy token (no separate UA). Blocking does NOT affect Google Search. (GoogleOther and Google-CloudVertexBot are separate crawlers not documented as feeding model training — see Generic / CLI below.)" },
       { label: "Meta", examples: "Meta-ExternalAgent, FacebookBot", what: "Feeds Meta AI / LLaMA model training." },
       { label: "Apple", examples: "Applebot-Extended", what: "Feeds Apple Intelligence on-device models. Policy token like Google-Extended." },
-      { label: "ByteDance", examples: "Bytespider", what: "Feeds TikTok / Doubao AI training. Known for partial robots.txt compliance." },
+      { label: "ByteDance", examples: "Bytespider, TikTokSpider", what: "Feeds TikTok / Doubao AI training. Known for partial robots.txt compliance." },
       { label: "Common Crawl", examples: "CCBot", what: "Open web corpus → feeds dozens of third-party LLMs (transitive inclusion)." },
       { label: "xAI", examples: "xAI-Bot, GrokBot", what: "Feeds Grok model training (X/Twitter)." },
       { label: "DeepSeek", examples: "DeepSeekBot", what: "Feeds DeepSeek model training." },
       { label: "Mistral", examples: "MistralBot", what: "Feeds Mistral AI model training (open-weight models)." },
       { label: "Cohere", examples: "Cohere", what: "Feeds Cohere's enterprise AI models." },
       { label: "Hugging Face", examples: "HuggingFaceBot", what: "Feeds Hugging Face's open datasets and model training." },
-      { label: "Allen AI", examples: "AI2Bot", what: "Feeds AI2 (Allen Institute) research models like OLMo." },
+      { label: "Allen AI", examples: "AI2Bot, Ai2Bot-Dolma", what: "Feeds AI2 (Allen Institute) research models like OLMo. Ai2Bot-Dolma is a specialized variant for the Dolma dataset." },
       { label: "Zhipu AI", examples: "GLM-Spider / ChatGLM", what: "Feeds ChatGLM model training (Chinese AI lab)." },
-      { label: "Other", examples: "Diffbot, ImagesiftBot, Amazonbot, Timpibot, VelenPublicBot, OmgiliBot, SeekrBot, FirecrawlAgent, magpie-crawler, Groq-Bot, Webzio, Character-AI", what: "Various AI training and data collection operations. Amazonbot also powers Alexa answers." },
+      { label: "Moonshot AI", examples: "KimiBot", what: "Feeds Moonshot AI's Kimi model training." },
+      { label: "Other", examples: "Diffbot, ImagesiftBot, Amazonbot, Timpibot, VelenPublicBot, OmgiliBot, SeekrBot, FirecrawlAgent, magpie-crawler, Groq-Bot, Webzio, Character-AI, ICC-Crawler, PanguBot", what: "Various AI training and data collection operations. Amazonbot also powers Alexa answers. ICC-Crawler is Japan's NICT AI research crawler; PanguBot feeds Huawei's Pangu models." },
     ],
   },
   {
@@ -63,7 +64,7 @@ export const LEGEND_GROUPS: LegendGroup[] = [
       { label: "DuckDuckGo", examples: "DuckAssistBot", what: "Powers DuckDuckGo AI Assist answers with citations." },
       { label: "You.com", examples: "YouBot", what: "Powers You.com AI search engine." },
       { label: "Cloudflare", examples: "Cloudflare-AI-Search", what: "Cloudflare's AI search infrastructure crawler." },
-      { label: "Other", examples: "PhindBot, Andibot, Grok-DeepSearch", what: "PhindBot powers Phind's developer-focused AI search. Andibot powers Andi. Grok-DeepSearch is xAI's multi-step research feature." },
+      { label: "Other", examples: "PhindBot, Andibot, Grok-DeepSearch, TavilyBot, TongyiBot, YiyanBot", what: "PhindBot powers Phind's developer-focused AI search. Andibot powers Andi. Grok-DeepSearch is xAI's multi-step research feature. TavilyBot powers an AI-focused search API used for grounding by third-party LLM apps and agents. TongyiBot and YiyanBot power Alibaba's Tongyi Qianwen and Baidu's Yiyan assistant answers, respectively." },
     ],
   },
   {
@@ -77,9 +78,10 @@ export const LEGEND_GROUPS: LegendGroup[] = [
       // Do not present it as equivalent to Claude-User.
       { label: "Anthropic (legacy)", examples: "Claude-Web — deprecated", what: "Older Anthropic user agent, now deprecated. Its original semantics are unclear; it behaves more like a general-purpose crawler than a genuine on-demand user fetch. Kept for backward compatibility only." },
       { label: "Perplexity", examples: "Perplexity-User", what: "On-demand page fetch for Perplexity users. Single request, cited inline." },
-      { label: "Google", examples: "GoogleAgent, Google-NotebookLM", what: "Fetches pages for Google's agentic / contextual AI features, and for sources added to NotebookLM." },
+      { label: "Google", examples: "Google-Agent, GoogleAgent-URLContext, Google-NotebookLM, Google-GeminiNotebook", what: "Fetches pages for Google's agentic / contextual AI features and for sources added to NotebookLM/Gemini Notebook." },
       { label: "Meta", examples: "Meta-ExternalFetcher", what: "Fetches a page when a user asks a Meta AI product (WhatsApp / Instagram / Messenger) to read a URL. The Meta peer of ChatGPT-User / Claude-User / Perplexity-User." },
       { label: "Mistral", examples: "MistralAI-User", what: "On-demand fetch for Mistral's chat product. User-triggered, single page." },
+      { label: "Other", examples: "kagi-fetcher, Kimi-User, Devin, Manus-User, NovaAct", what: "kagi-fetcher and Kimi-User are the Kagi/Kimi peers of ChatGPT-User. Devin (Cognition AI) is an AI software engineering agent that fetches web content as part of a task. Manus-User and NovaAct (Amazon) are AI agents that browse the web on a user's behalf." },
     ],
   },
   {
@@ -87,7 +89,7 @@ export const LEGEND_GROUPS: LegendGroup[] = [
     impact: "Your content → search results on Google, Bing, etc. Blocking removes you from search entirely.",
     subs: [
       { label: "General", examples: "Googlebot, Bingbot, Applebot, Yandex, Baidu", what: "Googlebot drives Google Search (90%+ of organic traffic). Bingbot powers Bing / Copilot. Applebot feeds Siri & Spotlight. Yandex/Baidu are Russia/China's primary search engines. These are the most important to keep allowed." },
-      { label: "Other", examples: "Bravebot, DuckDuckBot, Sogou, SeznamBot, NaverBot, 360Spider, Google-Safety, Google-InspectionTool, Storebot-Google", what: "Bravebot powers Brave Search. DuckDuckBot powers DuckDuckGo. Sogou/Seznam/Naver/360Spider are regional search engines (China, Czech, Korea). Google-Safety checks for malicious content, Google-InspectionTool is Search Console's on-demand checker, and Storebot-Google crawls listings for Google Play/Shopping." },
+      { label: "Other", examples: "Bravebot, DuckDuckBot, Sogou, SeznamBot, NaverBot, 360Spider, Google-Safety, Google-InspectionTool, Storebot-Google, KagiBot, PetalBot", what: "Bravebot powers Brave Search. DuckDuckBot powers DuckDuckGo. Sogou/Seznam/Naver/360Spider are regional search engines (China, Czech, Korea). Google-Safety checks for malicious content, Google-InspectionTool is Search Console's on-demand checker, and Storebot-Google crawls listings for Google Play/Shopping. KagiBot builds Kagi's independent search index; PetalBot builds Huawei's Petal Search index — both general search-index crawlers, not AI-answer bots." },
     ],
   },
   {
@@ -126,7 +128,7 @@ export const LEGEND_GROUPS: LegendGroup[] = [
     impact: "Manual tools or unknown crawlers. Could be benign (dev scripts) or malicious (scraping, probing). Monitor and block individually.",
     subs: [
       { label: "CLI tools", examples: "curl, Wget, python-requests, Python-urllib, Go-http-client, Java, Ruby, HTTPie, axios, okhttp, libwww-perl", what: "Command-line or library HTTP clients. No browser, no JS. Often used for dev scripts, CI/CD checks, backend services, or targeted scraping. Benign on their own but can indicate probing." },
-      { label: "Other", examples: "PetalBot, AdsBot-Google, GoogleOther, Scrapy, Slackbot, Slack-ImgProxy, KangarooBot, ResearchBot, unknown bot/crawler agents", what: "PetalBot is Huawei's search crawler. AdsBot-Google checks ad landing page quality. GoogleOther is Google's internal crawler for unspecified R&D — its purpose isn't publicly documented, so it's not assumed to be AI training. Scrapy is a generic scraping framework's default UA. KangarooBot and ResearchBot are unverified data collectors." },
+      { label: "Other", examples: "AdsBot-Google, OAI-AdsBot, GoogleOther, Google-CloudVertexBot, Scrapy, Slackbot, Slack-ImgProxy, KangarooBot, ResearchBot, unknown bot/crawler agents", what: "AdsBot-Google and OAI-AdsBot check ad landing page quality for Google Ads and ChatGPT ads respectively. GoogleOther is Google's internal crawler for unspecified R&D — its purpose isn't publicly documented, so it's not assumed to be AI training. Google-CloudVertexBot crawls a site owner's own site to build their custom Vertex AI Agent — not documented as training Google's own models. Scrapy is a generic scraping framework's default UA. KangarooBot and ResearchBot are unverified data collectors." },
     ],
   },
 ];
@@ -166,6 +168,7 @@ const BOT_LEGEND_ENTRIES: BotLegendEntry[] = [
   { name: "xAI-Bot", group: "AI Training", subLabel: "xAI", what: "Crawls your site to collect training data for Grok models. Operated by xAI, tied to X (Twitter)." },
   { name: "GrokBot", group: "AI Training", subLabel: "xAI", what: "Alternate xAI training-crawler user agent, same purpose as xAI-Bot — collects data to train Grok models." },
   { name: "Bytespider", group: "AI Training", subLabel: "ByteDance", what: "Crawls your site to train ByteDance's AI models (TikTok's parent company), including Doubao. Historically inconsistent about honoring robots.txt." },
+  { name: "TikTokSpider", group: "AI Training", subLabel: "ByteDance", what: "A second, distinct ByteDance training crawler alongside Bytespider — downloads data to train ByteDance's LLMs." },
   { name: "CCBot", group: "AI Training", subLabel: "Common Crawl", what: "Builds the open Common Crawl web archive, reused as training data by dozens of third-party LLMs and research labs — not one single company." },
   { name: "Amazonbot", group: "AI Training", subLabel: "Other", what: "Crawls your site to improve Amazon's services, including training data for Alexa and Amazon's AI-powered product answers." },
   { name: "Cohere", group: "AI Training", subLabel: "Cohere", what: "Crawls your site to collect training data for Cohere's enterprise-focused language models." },
@@ -187,6 +190,10 @@ const BOT_LEGEND_ENTRIES: BotLegendEntry[] = [
   { name: "Groq-Bot", group: "AI Training", subLabel: "Other", what: "Crawls your site to collect training/grounding data associated with Groq's fast-inference AI platform." },
   { name: "Webzio", group: "AI Training", subLabel: "Other", what: "Crawls news, forums, and blogs to build Webz.io's data feeds, resold to AI and analytics companies as training/enrichment data." },
   { name: "Character-AI", group: "AI Training", subLabel: "Other", what: "Crawls your site to collect data supporting Character.AI's conversational character models." },
+  { name: "KimiBot", group: "AI Training", subLabel: "Moonshot AI", what: "Crawls your site to collect training data for Moonshot AI's Kimi models. Disallowing signals your content shouldn't be used for training." },
+  { name: "ICC-Crawler", group: "AI Training", subLabel: "Other", what: "Operated by Japan's National Institute of Information and Communications Technology (NICT) for AI research purposes." },
+  { name: "PanguBot", group: "AI Training", subLabel: "Other", what: "Crawls your site to collect training data for Huawei's Pangu AI models." },
+  { name: "Ai2Bot-Dolma", group: "AI Training", subLabel: "Allen AI", what: "A specialized variant of AI2Bot used to build the Dolma training dataset. Already caught by the parent AI2Bot pattern; this entry exists for clearer attribution." },
 
   // ── AI Search ──────────────────────────────────────────────────
   { name: "OAI-SearchBot", group: "AI Search", subLabel: "OpenAI", what: "Builds the index ChatGPT Search uses to cite live sources in answers. Blocking removes your site from ChatGPT Search citations (doesn't affect GPTBot training)." },
@@ -200,6 +207,9 @@ const BOT_LEGEND_ENTRIES: BotLegendEntry[] = [
   { name: "Cloudflare-AI-Search", group: "AI Search", subLabel: "Cloudflare", what: "Crawls your site as part of Cloudflare's AI Search infrastructure, used by sites/customers building retrieval-augmented search on Cloudflare." },
   { name: "DuckAssistBot", group: "AI Search", subLabel: "DuckDuckGo", what: "Builds the index DuckDuckGo's AI-powered DuckAssist answers cite. Separate from the plain-search DuckDuckBot crawler." },
   { name: "meta-webindexer", group: "AI Search", subLabel: "Meta", what: "Builds the index behind Meta AI's search results — the peer of OAI-SearchBot / Claude-SearchBot. Recategorized from AI training to AI search per Meta's published documentation." },
+  { name: "TavilyBot", group: "AI Search", subLabel: "Tavily", what: "Crawls and indexes your site for Tavily's AI-focused search API, used for grounding by many third-party LLM apps and agents." },
+  { name: "TongyiBot", group: "AI Search", subLabel: "Alibaba", what: "Fetches web content for Alibaba's Tongyi Qianwen assistant and related Qwen-generated answers." },
+  { name: "YiyanBot", group: "AI Search", subLabel: "Baidu", what: "Fetches web content for Baidu's Yiyan assistant and related ERNIE-generated answers." },
 
   // ── AI Agent ───────────────────────────────────────────────────
   { name: "ChatGPT-User", group: "AI Agent", subLabel: "OpenAI", what: "Fetches a single page in real time when a ChatGPT user pastes a URL or the model browses on their behalf. Not bulk crawling — one request per user action." },
@@ -209,10 +219,17 @@ const BOT_LEGEND_ENTRIES: BotLegendEntry[] = [
   { name: "Claude-Web", group: "AI Agent", subLabel: "Anthropic (legacy)", what: "Deprecated Anthropic user agent. Its original semantics are unclear — it behaves more like a general-purpose crawler than a genuine on-demand user fetch. Kept for backward compatibility; do not assume it's equivalent to Claude-User." },
   { name: "claude-code", group: "AI Agent", subLabel: "Anthropic", what: "Requests made by Claude Code, Anthropic's CLI coding agent, when a user has it fetch a URL as part of a task." },
   { name: "Perplexity-User", group: "AI Agent", subLabel: "Perplexity", what: "Fetches a single page in real time when a Perplexity user asks about a specific URL. On-demand, cited inline in the answer." },
-  { name: "GoogleAgent", group: "AI Agent", subLabel: "Google", what: "Fetches pages on behalf of Google's agentic AI features (e.g. Gemini's URL-context / browsing tools) at a user's request." },
-  { name: "Google-NotebookLM", group: "AI Agent", subLabel: "Google", what: "Fetches a page when a user adds its URL as a source in Google's NotebookLM." },
+  { name: "GoogleAgent", group: "AI Agent", subLabel: "Google", what: "Fetches pages on behalf of Google's agentic AI features (e.g. Gemini's URL-context / browsing tools) at a user's request. Official token is the hyphenated Google-Agent." },
+  { name: "Google-NotebookLM", group: "AI Agent", subLabel: "Google", what: "Fetches a page when a user adds its URL as a source in Google's NotebookLM. Legacy token — Google is migrating to Google-GeminiNotebook; support for this one ends August 2026." },
+  { name: "Google-GeminiNotebook", group: "AI Agent", subLabel: "Google", what: "Fetches a page when a user adds its URL as a source in Gemini Notebook. Current token, replacing the legacy Google-NotebookLM." },
   { name: "MistralAI-User", group: "AI Agent", subLabel: "Mistral", what: "Fetches a single page in real time when a user of Mistral's chat product (Le Chat) references a URL. On-demand only." },
   { name: "Meta-ExternalFetcher", group: "AI Agent", subLabel: "Meta", what: "Fetches a single page in real time when a user asks a Meta AI product (WhatsApp / Instagram / Messenger) to read a URL. The Meta peer of ChatGPT-User / Claude-User / Perplexity-User." },
+  { name: "kagi-fetcher", group: "AI Agent", subLabel: "Kagi", what: "Fetches a single page in real time when a Kagi user asks Kagi's Assistant a question requiring live retrieval. The Kagi peer of ChatGPT-User." },
+  { name: "Kimi-User", group: "AI Agent", subLabel: "Moonshot AI", what: "Fetches a single page in real time when a user asks Kimi to summarize an article or answer a question requiring live web retrieval." },
+  { name: "Devin", group: "AI Agent", subLabel: "Cognition AI", what: "Requests made by Devin, Cognition AI's autonomous software engineering agent, when it browses the web as part of a user's task." },
+  { name: "Manus-User", group: "AI Agent", subLabel: "Manus", what: "Requests made by Manus, an AI agent operated by Butterfly Effect, when it autonomously navigates and interacts with websites on a user's behalf." },
+  { name: "GoogleAgent-URLContext", group: "AI Agent", subLabel: "Google", what: "Fetches a URL a developer supplied as context to the Gemini API, on that developer's behalf." },
+  { name: "NovaAct", group: "AI Agent", subLabel: "Amazon", what: "Requests made by Nova Act, Amazon's browser-using AI agent, when it navigates and interacts with websites on a user's behalf." },
 
   // ── Search Engine ──────────────────────────────────────────────
   { name: "Googlebot", group: "Search Engine", subLabel: "General", what: "Crawls and indexes your site for Google Search — the primary driver of organic search traffic for most sites. Blocking removes you from Google Search entirely." },
@@ -229,6 +246,8 @@ const BOT_LEGEND_ENTRIES: BotLegendEntry[] = [
   { name: "SeznamBot", group: "Search Engine", subLabel: "Other", what: "Crawls and indexes your site for Seznam, the leading search engine in the Czech Republic." },
   { name: "NaverBot", group: "Search Engine", subLabel: "Other", what: "Crawls and indexes your site for Naver, the leading search engine in South Korea." },
   { name: "360Spider", group: "Search Engine", subLabel: "Other", what: "Crawls and indexes your site for Qihoo 360 Search (so.com), a regional Chinese search engine." },
+  { name: "KagiBot", group: "Search Engine", subLabel: "Other", what: "Crawls and indexes your site to build Kagi Search's independent, ad-free search index — Kagi's own docs describe this as their general search-index crawler, the peer of Googlebot/Bingbot, not one that feeds AI-generated answers (that's kagi-fetcher)." },
+  { name: "PetalBot", group: "Search Engine", subLabel: "Other", what: "Huawei's crawler for Petal Search's general search index. Huawei's own webmaster docs describe it as a standard search-index crawler; not documented as feeding AI-generated answers." },
 
   // ── SEO Tool ───────────────────────────────────────────────────
   { name: "AhrefsBot", group: "SEO Tool", subLabel: "Audit", what: "Crawls your site to build Ahrefs' backlink index and keyword/SEO reports, sold to Ahrefs' subscribers. Blocking hides you from those reports, not from search engines." },
@@ -281,8 +300,9 @@ const BOT_LEGEND_ENTRIES: BotLegendEntry[] = [
 
   // ── Generic / CLI ──────────────────────────────────────────────
   { name: "GoogleOther", group: "Generic / CLI", subLabel: "Other", what: "Google's generic/internal crawler for experimental or unspecified R&D purposes. Its exact purpose isn't publicly documented by Google — unlike Google-Extended, it is not confirmed to feed AI training, so it's treated as a general-purpose Google crawler rather than an AI one." },
-  { name: "PetalBot", group: "Generic / CLI", subLabel: "Other", what: "Huawei's web crawler, used to power search and AI features in Huawei's Petal Search and related products." },
+  { name: "Google-CloudVertexBot", group: "Generic / CLI", subLabel: "Other", what: "Per Google's own crawler docs, this crawls a site's own content only when its owner requests it, to build that owner's custom Vertex AI Agent. Not documented as training Google's own models, so treated as a general Google crawler rather than an AI-training one." },
   { name: "AdsBot", group: "Generic / CLI", subLabel: "Other", what: "Google's crawler that checks the quality and policy compliance of ad landing pages. Related to Google Ads, not organic Search ranking." },
+  { name: "OAI-AdsBot", group: "Generic / CLI", subLabel: "Other", what: "OpenAI's crawler that checks the quality and policy compliance of ad landing pages linked from ChatGPT ads. Not a training or search crawler." },
   { name: "Scrapy", group: "Generic / CLI", subLabel: "Other", what: "The default user agent of the Scrapy Python web-scraping framework. Could be anyone's scraper — a dev script, data pipeline, or unsanctioned scraping." },
   { name: "Slackbot", group: "Generic / CLI", subLabel: "Other", what: "Slack's background user agent for re-verifying links already posted in Slack. Distinct from Slackbot-LinkExpanding, which fetches the initial preview." },
   { name: "Slack-ImgProxy", group: "Generic / CLI", subLabel: "Other", what: "Slack's image-proxy fetcher, used to relay images referenced in Slack messages through Slack's own CDN." },

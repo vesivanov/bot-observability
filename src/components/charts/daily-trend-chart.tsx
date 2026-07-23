@@ -13,6 +13,7 @@ import {
 } from "recharts";
 import { ChartTooltip, axisCursor, tooltipWrapperStyle } from "@/components/charts/chart-tooltip";
 import { categoryMeta, categoryShortLabel, sortCategories } from "@/lib/categories";
+import { fillDatePeriods } from "@/lib/date-buckets";
 
 interface DailyCount {
   date: string;
@@ -31,17 +32,7 @@ function dateKey(date: Date) {
 
 function fillDailyTrend(data: DailyCount[], periodDays: number, referenceTime: Date): DailyCount[] {
   const byDate = new Map(data.map((row) => [row.date, row.count]));
-  const end = new Date(referenceTime);
-  end.setHours(0, 0, 0, 0);
-  const start = new Date(end);
-  start.setDate(start.getDate() - Math.max(periodDays - 1, 0));
-
-  return Array.from({ length: periodDays }, (_, index) => {
-    const date = new Date(start);
-    date.setDate(start.getDate() + index);
-    const key = dateKey(date);
-    return { date: key, count: byDate.get(key) ?? 0 };
-  });
+  return fillDatePeriods(periodDays, referenceTime).map((key) => ({ date: key, count: byDate.get(key) ?? 0 }));
 }
 
 const OTHER_CATEGORY_KEY = "other";
@@ -120,7 +111,7 @@ function aggregateDailyCategory(data: DailyCategoryCount[], gran: Granularity): 
     const date = bucketStart(row.date, gran);
     const key = `${date}:${row.bot_category}`;
     const existing = map.get(key);
-    if (existing) existing.count += row.count;
+    if (existing) map.set(key, { ...existing, count: existing.count + row.count });
     else map.set(key, { date, bot_category: row.bot_category, count: row.count });
   }
   return Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date));
@@ -281,7 +272,7 @@ export function DailyTrendDashboard({
           </div>
         )}
       </div>
-      <div className={mode === "total" ? "h-[200px]" : undefined}>
+      <div>
         {mode === "total" ? (
           <DailyTrendChart data={displayDailyTrend} granularity={granularity} />
         ) : (
@@ -307,13 +298,16 @@ export function DailyCategoryTrendChart({
   const pathname = usePathname();
   const router = useRouter();
   const { categories, series, totals } = useMemo(() => {
+    const fullDayKeys = fillDailyTrend([], periodDays, referenceTime).map((row) => row.date);
     if (granularity !== "day") {
       const aggregated = aggregateDailyCategory(data, granularity);
-      const bucketKeys = Array.from(new Set(aggregated.map((row) => row.date))).sort();
+      // Zero-fill every week/month bucket across the full period, not just
+      // the ones with data — otherwise an empty week/month is silently
+      // dropped instead of showing as zero, unlike the total-trend view.
+      const bucketKeys = Array.from(new Set(fullDayKeys.map((day) => bucketStart(day, granularity)))).sort();
       return buildDailyCategorySeries(aggregated, bucketKeys);
     }
-    const bucketKeys = fillDailyTrend([], periodDays, referenceTime).map((row) => row.date);
-    return buildDailyCategorySeries(data, bucketKeys);
+    return buildDailyCategorySeries(data, fullDayKeys);
   }, [data, periodDays, referenceTime, granularity]);
   const catsParam = searchParams.get("cats");
   const selectedFromUrl = catsParam === "none" ? [] : catsParam?.split(",").filter(Boolean) ?? [];
@@ -361,44 +355,47 @@ export function DailyCategoryTrendChart({
           );
         })}
       </div>
-      <ResponsiveContainer width="100%" height={260}>
-        <AreaChart data={series} margin={{ top: 6, right: 8, left: -16, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.07)" vertical={false} />
-          <XAxis
-            dataKey="date"
-            tick={{ fill: "#737373", fontSize: 11 }}
-            tickLine={false}
-            axisLine={false}
-            tickFormatter={(d) => formatBucketLabel(d, granularity)}
-            interval="preserveStartEnd"
-          />
-          <YAxis tick={{ fill: "#737373", fontSize: 11 }} tickLine={false} axisLine={false} width={40} />
-          <Tooltip
-            content={<ChartTooltip formatLabel={(label) => formatBucketTooltipLabel(String(label), granularity)} />}
-            cursor={axisCursor}
-            isAnimationActive={false}
-            wrapperStyle={tooltipWrapperStyle}
-          />
-          {enabledCategories.map((category) => (
-            <Area
-              key={category}
-              type="monotone"
-              dataKey={category}
-              name={seriesLabel(category)}
-              stackId="categories"
-              stroke={seriesColor(category)}
-              strokeWidth={1.5}
-              fill={seriesColor(category)}
-              fillOpacity={0.32}
-              dot={false}
-              activeDot={{ r: 3, stroke: "#120f08", strokeWidth: 1 }}
-            />
-          ))}
-        </AreaChart>
-      </ResponsiveContainer>
       {enabledCategories.length === 0 ? (
-        <p className="mt-2 text-xs text-neutral-500">Select at least one category to show the trend.</p>
-      ) : null}
+        <div className="flex h-[260px] items-center justify-center text-xs text-neutral-500">
+          Select at least one category to show the trend.
+        </div>
+      ) : (
+        <ResponsiveContainer width="100%" height={260}>
+          <AreaChart data={series} margin={{ top: 6, right: 8, left: -16, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.07)" vertical={false} />
+            <XAxis
+              dataKey="date"
+              tick={{ fill: "#737373", fontSize: 11 }}
+              tickLine={false}
+              axisLine={false}
+              tickFormatter={(d) => formatBucketLabel(d, granularity)}
+              interval="preserveStartEnd"
+            />
+            <YAxis tick={{ fill: "#737373", fontSize: 11 }} tickLine={false} axisLine={false} width={40} />
+            <Tooltip
+              content={<ChartTooltip formatLabel={(label) => formatBucketTooltipLabel(String(label), granularity)} />}
+              cursor={axisCursor}
+              isAnimationActive={false}
+              wrapperStyle={tooltipWrapperStyle}
+            />
+            {enabledCategories.map((category) => (
+              <Area
+                key={category}
+                type="monotone"
+                dataKey={category}
+                name={seriesLabel(category)}
+                stackId="categories"
+                stroke={seriesColor(category)}
+                strokeWidth={1.5}
+                fill={seriesColor(category)}
+                fillOpacity={0.32}
+                dot={false}
+                activeDot={{ r: 3, stroke: "#120f08", strokeWidth: 1 }}
+              />
+            ))}
+          </AreaChart>
+        </ResponsiveContainer>
+      )}
     </div>
   );
 }
