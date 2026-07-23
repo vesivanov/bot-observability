@@ -45,6 +45,7 @@ interface PeriodStats {
   categories: CategoryCount[];
   topBotsWithConfidence: BotConfidenceCount[];
   aiBotsWithConfidence: BotConfidenceCount[];
+  aiBotsAllWithConfidence?: BotConfidenceCount[];
   newBots: NewBot[];
 }
 
@@ -58,6 +59,7 @@ export function OverviewView({
   period,
   periodDays,
   projectFilter,
+  categoryFilter,
   latestHeartbeat,
   latestEvent,
   referenceTime,
@@ -76,6 +78,7 @@ export function OverviewView({
   period: string;
   periodDays: number;
   projectFilter?: string;
+  categoryFilter?: string;
   latestHeartbeat: Date | null;
   latestEvent: Date | null;
   referenceTime: Date;
@@ -102,6 +105,17 @@ export function OverviewView({
     : trendPercent > 0 ? "Increase" : trendPercent < 0 ? "Decrease" : "No change";
 
   const rowCategoryHref = (category: string) => categoryHref({ view: "overview", period, project: projectFilter, category });
+
+  // The per-bot AI breakdown panel only renders when an AI category chip is
+  // selected (All AI / AI training / AI search / AI agent). It is sourced from
+  // stats.aiBotsWithConfidence, which fetchStatsBatch / fetchRollupStats scopes
+  // to the selected chip — so when "AI training" is selected, the panel shows
+  // only training bots (GPTBot, ClaudeBot, …), and so on.
+  const AI_BREAKDOWN_CATEGORIES = new Set(["ai", "ai_training", "ai_search", "ai_agent"]);
+  const showAiBreakdown = categoryFilter ? AI_BREAKDOWN_CATEGORIES.has(categoryFilter) : false;
+  const breakdownLabel = !categoryFilter || categoryFilter === "ai"
+    ? "AI bots"
+    : categoryLabel(categoryFilter);
 
   return (
     <div className="space-y-5">
@@ -149,10 +163,13 @@ export function OverviewView({
         <CrawlerMixBars data={stats.categories} total={stats.total} categoryHref={rowCategoryHref} />
       </Panel>
 
-      {isLongRange ? (
-        <LongRangeCaption label="Top pages, movers, hourly distribution, and AI crawls vs. visits are" />
-      ) : (
-        <AiCrawlsVsVisits data={stats.aiBotsWithConfidence} />
+      {showAiBreakdown && (
+        <AiBotsBreakdown
+          data={stats.aiBotsWithConfidence}
+          label={breakdownLabel}
+          period={period}
+          projectFilter={projectFilter}
+        />
       )}
 
       <div className={`grid grid-cols-1 gap-4 ${isLongRange ? "" : "lg:grid-cols-2"}`}>
@@ -226,6 +243,12 @@ export function OverviewView({
         </Panel>
       )}
 
+      {isLongRange && (
+        <LongRangeCaption label="Top pages, movers, and hourly distribution are" />
+      )}
+
+      <AiCrawlsVsVisits data={stats.aiBotsAllWithConfidence ?? stats.aiBotsWithConfidence} />
+
       {!isLongRange && (
         <section>
           <h3 className="mb-3 text-sm font-semibold text-neutral-100">What changed</h3>
@@ -242,6 +265,68 @@ export function OverviewView({
 
 function normalizeBotCategoryDot(botName: string, category: string) {
   return categoryMeta(normalizeBotCategory(botName, category)).dot;
+}
+
+// Per-bot AI breakdown panel — shown on the Overview only when an AI category
+// chip is selected (All AI / AI training / AI search / AI agent). Renders the
+// individual bots behind the company-level numbers: GPTBot vs ClaudeBot vs
+// PerplexityBot, ChatGPT-User vs Claude-User, etc., with verified share and a
+// link into the per-bot detail view. Silent when the selected project has no
+// AI hits in the chosen category (no rows → no panel).
+function AiBotsBreakdown({
+  data,
+  label,
+  period,
+  projectFilter,
+}: {
+  data: BotConfidenceCount[];
+  label: string;
+  period: string;
+  projectFilter?: string;
+}) {
+  if (data.length === 0) return null;
+  const maxHits = Math.max(...data.map((b) => b.total_hits), 1);
+
+  return (
+    <Panel title={`${label}`} eyebrow="per bot" meta={`${data.length} ${data.length === 1 ? "bot" : "bots"}`}>
+      <div className="space-y-1.5">
+        {data.map((b) => {
+          const company = botCompany(b.bot_name);
+          const verifiedShare = pct(b.verified_hits, b.total_hits);
+          return (
+            <div
+              key={`${b.bot_name}:${b.bot_category}`}
+              className="grid grid-cols-[1.2fr_1fr_5rem] items-center gap-3 text-xs"
+            >
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className={`h-2 w-2 shrink-0 rounded-full ${normalizeBotCategoryDot(b.bot_name, b.bot_category)}`} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium text-neutral-100">
+                    <BotName
+                      name={b.bot_name}
+                      href={botHref({ bot: b.bot_name, project: projectFilter, period })}
+                      className="truncate font-medium text-neutral-100 hover:text-white"
+                    />
+                  </span>
+<span className="mt-0.5 flex items-center gap-1 text-[10px] text-neutral-500">
+                      <span className="rounded bg-neutral-900 px-1 py-px">{company}</span>
+                      <span className={verifiedShare >= 50 ? "text-emerald-300" : "text-amber-300"}>
+                        {verifiedShare}% verified
+                      </span>
+                    </span>
+                </span>
+              </span>
+<BarMeter value={(b.total_hits / maxHits) * 100} color={categoryMeta(normalizeBotCategory(b.bot_name, b.bot_category)).bar} />
+                <span className="text-right">
+                  <span className="block font-mono text-neutral-100">{b.total_hits.toLocaleString()}</span>
+                  <span className="block text-[10px] text-neutral-500">hits</span>
+                </span>
+            </div>
+          );
+        })}
+      </div>
+    </Panel>
+  );
 }
 
 // "AI crawls vs. visits" — client-side aggregation of stats.aiBotsWithConfidence

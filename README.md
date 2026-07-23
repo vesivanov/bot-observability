@@ -205,7 +205,7 @@ The ingestion endpoint enforces a few hardcoded limits (see `src/app/api/bot-hit
 
 ## Privacy and Security
 
-- The dashboard is protected by `BOT_LOG_TOKEN`, not a full user-management system. A successful login creates a signed, HTTP-only, same-site session cookie valid for 12 hours; the token itself is never stored in the cookie.
+- The dashboard is protected by `BOT_LOG_TOKEN`, not a full user-management system. A successful login creates a signed, HTTP-only, same-site session cookie valid for 1 year; the token itself is never stored in the cookie.
 - Ingestion uses the same `BOT_LOG_TOKEN`; keep it server-side.
 - Submitted IP addresses are used for bot verification and then stored only as domain-separated, keyed HMAC-SHA-256 values derived from `BOT_LOG_TOKEN`. Raw IP storage is not supported.
 - Rotating `BOT_LOG_TOKEN` changes the keyed hash produced for future observations of the same IP. Existing stored hashes remain unchanged.

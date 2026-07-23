@@ -27,5 +27,5 @@ Include:
 - Use a random `BOT_LOG_TOKEN` of at least 32 characters. Generate it with `openssl rand -base64 32` or an equivalent cryptographically secure generator.
 - Rotate secrets before making a previously private deployment public.
 - Submitted IP addresses are verified in memory and then stored only as keyed HMAC-SHA-256 values derived from `BOT_LOG_TOKEN`; raw IP storage is not supported.
-- The dashboard uses a signed, HTTP-only 12-hour session cookie, not multi-user authentication.
+- The dashboard uses a signed, HTTP-only 1-year session cookie, not multi-user authentication.
 - The same `BOT_LOG_TOKEN` authenticates dashboard login and ingestion. Keep it server-side and do not expose it in browser code.

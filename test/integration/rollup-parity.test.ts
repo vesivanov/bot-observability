@@ -203,3 +203,138 @@ describe.skipIf(!url)("rollup / raw parity", () => {
     expect(afterCurrent.total - baselineCurrent.total).toBe(0);
   });
 });
+
+// Parity for the AI subspace surfaced by fetchStatsBatch / fetchRollupStats.
+// Covers the per-bot AI breakdown (bot_conf_ai) and the chip-agnostic AI
+// crawls-vs-visits data (bot_conf_ai_all, only emitted when a chip filter is
+// applied). Distinct fixture set so this block can be added/removed without
+// touching the BOT_A/B/C assertions above.
+describe.skipIf(!url)("rollup / raw AI parity", () => {
+  const AI_PROJECT = "__vitest_integration_ai_parity__";
+  const AI_TRAINING_BOT = "GPTBot";          // ai_training, matched by category
+  const AI_AGENT_BOT = "ChatGPT-User";       // ai_agent, matched by AI_BOT_NAMES_SQL
+  const NON_AI_BOT = "__VitestAiParityOther__";
+
+  let db: DbClient;
+  let raw: ReturnType<typeof postgres>;
+
+  beforeAll(async () => {
+    db = createDbClient(url as string);
+    raw = postgres(url as string, { max: 1 });
+
+    const base = {
+      project_name: AI_PROJECT,
+      environment: "test",
+      host: "example.test",
+      path: "/vitest-ai",
+      query_string: "",
+      method: "GET",
+      status_code: 200,
+      confidence: "verified",
+      user_agent: "VitestAiBot/1.0",
+      referer: "",
+      ip: "203.0.113.100",
+      country: "",
+      region: "",
+      city: "",
+      timezone: "",
+      deployment_url: "",
+      vercel_id: "",
+      is_api_route: false,
+      sample_rate: 1,
+      heartbeat: false,
+    };
+    const hit2 = (o: Partial<BotHit>) => ({ ...base, bot_name: NON_AI_BOT, bot_category: "generic", ...o }) as BotHit;
+    await db.insertHit(hit2({ bot_name: AI_TRAINING_BOT, bot_category: "ai_training" }));
+    await db.insertHit(hit2({ bot_name: AI_TRAINING_BOT, bot_category: "ai_training", confidence: "ua_only" }));
+    await db.insertHit(hit2({ bot_name: AI_AGENT_BOT, bot_category: "ai_agent" }));
+    await db.insertHit(hit2({ bot_name: AI_AGENT_BOT, bot_category: "ai_agent", confidence: "ua_only" }));
+    await db.insertHit(hit2({ bot_name: AI_AGENT_BOT, bot_category: "ai_agent" }));
+    await db.insertHit(hit2({ bot_name: NON_AI_BOT, bot_category: "generic" }));
+  });
+
+  afterAll(async () => {
+    await raw`DELETE FROM bot_hits WHERE project_name = ${AI_PROJECT}`;
+    await raw`DELETE FROM bot_hits_daily WHERE project_name = ${AI_PROJECT}`;
+    await raw`DELETE FROM bot_first_seen WHERE bot_name IN (${AI_TRAINING_BOT}, ${AI_AGENT_BOT}, ${NON_AI_BOT})`;
+    await raw.end();
+    await db.close();
+  });
+
+  // Window = current UTC day, matching currentUtcDayWindow above, so raw and
+  // rollup see the same single-day data set.
+  function currentUtcDayWindow() {
+    const now = new Date();
+    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
+    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59, 999));
+    return { start, end };
+  }
+
+  function confidenceMap(rows: { bot_name: string; bot_category: string; total_hits: number; verified_hits: number }[]) {
+    return new Map(rows.map((r) => [`${r.bot_name}:${r.bot_category}`, {
+      total: r.total_hits,
+      verified: r.verified_hits,
+    }]));
+  }
+
+  it("raw and rollup agree on aiBotsWithConfidence (no chip filter)", async () => {
+    const { start, end } = currentUtcDayWindow();
+    const [rollup, rawStats] = await Promise.all([
+      db.fetchRollupStats(start, end, AI_PROJECT),
+      db.fetchStatsBatch(start, end, AI_PROJECT),
+    ]);
+
+    const rollupAi = confidenceMap(rollup.aiBotsWithConfidence);
+    const rawAi = confidenceMap(rawStats.aiBotsWithConfidence);
+
+    expect(rollupAi.get(`${AI_TRAINING_BOT}:ai_training`)).toEqual({ total: 2, verified: 1 });
+    expect(rollupAi.get(`${AI_AGENT_BOT}:ai_agent`)).toEqual({ total: 3, verified: 2 });
+
+    expect(rawAi.get(`${AI_TRAINING_BOT}:ai_training`)).toEqual({ total: 2, verified: 1 });
+    expect(rawAi.get(`${AI_AGENT_BOT}:ai_agent`)).toEqual({ total: 3, verified: 2 });
+
+    expect(rollupAi).toEqual(rawAi);
+    // Non-AI bot must not appear in the AI subspace.
+    expect(rollupAi.has(`${NON_AI_BOT}:generic`)).toBe(false);
+  });
+
+  it("raw and rollup preserve crawls AND visits in aiBotsAllWithConfidence when ai_agent chip is selected", async () => {
+    const { start, end } = currentUtcDayWindow();
+    const [rollup, rawStats] = await Promise.all([
+      db.fetchRollupStats(start, end, AI_PROJECT, "ai_agent"),
+      db.fetchStatsBatch(start, end, AI_PROJECT, "ai_agent"),
+    ]);
+
+    // The chip-filtered breakdown (aiBotsWithConfidence) shows only agents.
+    expect(rollup.aiBotsWithConfidence.map((r) => r.bot_name).sort()).toEqual([AI_AGENT_BOT]);
+    expect(rawStats.aiBotsWithConfidence.map((r) => r.bot_name).sort()).toEqual([AI_AGENT_BOT]);
+
+    // aiBotsAllWithConfidence drops the chip filter — both training AND agent
+    // bots are present, so the crawls-vs-visits panel can show a ratio.
+    const rollupAll = confidenceMap(rollup.aiBotsAllWithConfidence);
+    expect(rollupAll.get(`${AI_TRAINING_BOT}:ai_training`)).toEqual({ total: 2, verified: 1 });
+    expect(rollupAll.get(`${AI_AGENT_BOT}:ai_agent`)).toEqual({ total: 3, verified: 2 });
+
+    const rawAll = confidenceMap(rawStats.aiBotsAllWithConfidence);
+    expect(rawAll.get(`${AI_TRAINING_BOT}:ai_training`)).toEqual({ total: 2, verified: 1 });
+    expect(rawAll.get(`${AI_AGENT_BOT}:ai_agent`)).toEqual({ total: 3, verified: 2 });
+
+    expect(rollupAll).toEqual(rawAll);
+  });
+
+  it("aiBotsAllWithConfidence is present even without a chip filter (and equals aibotsWithConfidence)", async () => {
+    // Guards against the conditional-emission path: when there's no chip
+    // filter, the JS layer falls back to aiBotsWithConfidence, so crawls-vs-
+    // visits still has data to render.
+    const { start, end } = currentUtcDayWindow();
+    const [rollup, rawStats] = await Promise.all([
+      db.fetchRollupStats(start, end, AI_PROJECT),
+      db.fetchStatsBatch(start, end, AI_PROJECT),
+    ]);
+
+    expect(rollup.aiBotsAllWithConfidence).toBeDefined();
+    expect(rawStats.aiBotsAllWithConfidence).toBeDefined();
+    expect(rollup.aiBotsAllWithConfidence).toEqual(rollup.aiBotsWithConfidence);
+    expect(rawStats.aiBotsAllWithConfidence).toEqual(rawStats.aiBotsWithConfidence);
+  });
+});
