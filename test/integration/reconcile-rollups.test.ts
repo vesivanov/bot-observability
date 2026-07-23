@@ -1,9 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { execFileSync } from "child_process";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import postgres from "postgres";
+
+// execFile (not execFileSync): this suite runs alongside other integration
+// test files that are doing their own concurrent async Postgres I/O in the
+// same process. A *Sync child_process call blocks the event loop for the
+// script's whole run, which can stall those other files' in-flight queries —
+// a real, if hard-to-reproduce-locally, source of CI-only flakiness.
+const execFileAsync = promisify(execFile);
 
 // Integration tests only run when TEST_DATABASE_URL is set — see
 // migrations.test.ts for the full rationale.
@@ -65,8 +73,8 @@ describe.skipIf(!url)("reconcile-rollups.mjs", () => {
           ('2026-02-01', 'proj', 'GhostBot', 'generic', '2xx', 999, 999)
       `);
 
-      const output = execFileSync("node", [reconcileScript, withSearchPath(url as string, schema)], { encoding: "utf8" });
-      expect(output).toContain("reconciled: rollup matches raw");
+      const { stdout } = await execFileAsync("node", [reconcileScript, withSearchPath(url as string, schema)]);
+      expect(stdout).toContain("reconciled: rollup matches raw");
 
       const daily = await scoped<{ day: string; bot_name: string; status_class: string; hits: number; verified_hits: number }[]>`
         SELECT day::text, bot_name, status_class, hits, verified_hits FROM bot_hits_daily ORDER BY day, bot_name, status_class
