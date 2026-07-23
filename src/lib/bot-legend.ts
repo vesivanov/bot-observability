@@ -110,7 +110,7 @@ export const LEGEND_GROUPS: LegendGroup[] = [
     ],
   },
   {
-    label: "Monitoring", description: "Uptime / performance checks", color: "text-neutral-400",
+    label: "Monitoring", description: "Uptime / performance checks", color: "text-lime-400",
     impact: "Periodic requests to verify your site is online and responsive. Blocking causes false downtime alerts.",
     subs: [
       { label: "Services", examples: "Pingdom, UptimeRobot, Datadog, NewRelic, GTmetrix, WebPageTest", what: "Check your site's uptime and performance, typically every 1-5 minutes for uptime checks or on-demand for GTmetrix/WebPageTest speed tests. If blocked, uptime checkers report your site as down, triggering false alarm notifications." },

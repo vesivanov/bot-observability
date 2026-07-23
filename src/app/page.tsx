@@ -25,10 +25,11 @@ const CATEGORY_DESCRIPTIONS: Partial<Record<string, string>> = {
   ai_training: "Bulk model data collection",
   ai_search: "Citation and retrieval indexes",
   ai_agent: "User-triggered page fetches",
-  search_crawler: "Traditional organic discovery",
-  seo_crawler: "Audits and competitive scans",
+  search_crawler: "Indexes pages for search results",
+  seo_crawler: "Third-party rank-tracking and SEO tools",
   social_preview: "Link previews and unfurlers",
-  generic: "Scripts, libraries, and unclassified bots",
+  monitoring: "Uptime and performance checks",
+  generic: "Scripts, libraries, archivers, and unclassified bots",
 };
 
 // "unknown" has no meaningful category to advertise, and "ai_crawler" is a
@@ -67,7 +68,7 @@ const PREVIEW_TOP_BOTS: { name: string; category: string; hits: number }[] = [
   { name: "ChatGPT-User", category: "ai_agent", hits: 1100 },
   { name: "AhrefsBot", category: "seo_crawler", hits: 1050 },
   { name: "Twitterbot", category: "social_preview", hits: 720 },
-  { name: "UptimeRobot", category: "generic", hits: 340 },
+  { name: "UptimeRobot", category: "monitoring", hits: 340 },
 ];
 const PREVIEW_MAX_BOT_HITS = Math.max(...PREVIEW_TOP_BOTS.map((b) => b.hits));
 

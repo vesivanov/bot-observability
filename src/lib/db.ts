@@ -28,7 +28,7 @@ import type {
   NewBot,
 } from "./schema";
 import { statusClassOf } from "./schema";
-import { normalizeBotCategory, AI_AGENT_BOTS, AI_SEARCH_BOTS } from "./categories";
+import { normalizeBotCategory, AI_AGENT_BOTS, AI_SEARCH_BOTS, MONITORING_BOTS } from "./categories";
 import { PATTERNS } from "./bots";
 
 // A raw bot_hits row can represent more than one real hit when the ingest
@@ -42,8 +42,9 @@ const HIT_WEIGHT_SQL = "1.0/NULLIF(sample_rate,0)";
 // Appends a category filter to `values` and returns the SQL clause referencing it.
 // The pseudo-category "ai" matches all ai_* raw categories via LIKE; any other
 // category matches the raw stored bot_category exactly — except for specific AI
-// sub-categories (ai_agent / ai_search / ai_training) which ALSO match legacy
-// ai_crawler rows that normalizeBotCategory would remap to that category.
+// sub-categories (ai_agent / ai_search / ai_training), which ALSO match legacy
+// ai_crawler rows, and "monitoring", which ALSO matches legacy generic rows —
+// both cases mirror the remap normalizeBotCategory does at read time.
 function categoryFilterSql(category: string | undefined, values: (string | number)[]): string {
   if (!category) return "";
   if (category === "ai") {
@@ -62,6 +63,10 @@ function categoryFilterSql(category: string | undefined, values: (string | numbe
     const allKnown = Array.from(new Set([...AI_AGENT_BOTS, ...AI_SEARCH_BOTS]));
     const names = allKnown.map((n) => `'${n}'`).join(",");
     return `AND (bot_category = 'ai_training' OR (bot_category = 'ai_crawler' AND bot_name NOT IN (${names})))`;
+  }
+  if (category === "monitoring") {
+    const names = Array.from(MONITORING_BOTS).map((n) => `'${n}'`).join(",");
+    return `AND (bot_category = 'monitoring' OR (bot_category = 'generic' AND bot_name IN (${names})))`;
   }
   values.push(category);
   return `AND bot_category = $${values.length}`;

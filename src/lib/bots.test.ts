@@ -91,6 +91,23 @@ describe("detectBot regex tightening", () => {
   });
 });
 
+describe("monitoring category", () => {
+  it("categorizes uptime/performance monitoring bots as monitoring, not generic", () => {
+    const names = ["Pingdom", "UptimeRobot", "Datadog", "NewRelic", "GTmetrix", "WebPageTest"];
+    for (const name of names) {
+      const entry = PATTERNS.find((p) => p.name === name);
+      expect(entry, `expected a PATTERNS entry for ${name}`).toBeDefined();
+      expect(entry?.category).toBe("monitoring");
+    }
+  });
+
+  it("still categorizes InternetArchive as generic (archival, not monitoring)", () => {
+    const match = detectBot("Mozilla/5.0 (compatible; ia_archiver)");
+    expect(match?.name).toBe("InternetArchive");
+    expect(match?.category).toBe("generic");
+  });
+});
+
 describe("vendor-fact recategorizations", () => {
   it("categorizes GoogleOther as generic, not ai_training", () => {
     const match = detectBot("Mozilla/5.0 (compatible; GoogleOther)");

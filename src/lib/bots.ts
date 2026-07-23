@@ -247,12 +247,12 @@ export const PATTERNS: BotMatch[] = [
   //  Archival / monitoring
   // ══════════════════════════════════════════════════════════
   { name: "InternetArchive", category: "generic", pattern: /archive\.org|wayback|ia_archiver/i },
-  { name: "Pingdom", category: "generic", pattern: /Pingdom/i },
-  { name: "UptimeRobot", category: "generic", pattern: /UptimeRobot/i },
-  { name: "Datadog", category: "generic", pattern: /Datadog/i },
-  { name: "NewRelic", category: "generic", pattern: /NewRelic/i },
-  { name: "GTmetrix", category: "generic", pattern: /GTmetrix/i },
-  { name: "WebPageTest", category: "generic", pattern: /WebPageTest|wptagent/i },
+  { name: "Pingdom", category: "monitoring", pattern: /Pingdom/i },
+  { name: "UptimeRobot", category: "monitoring", pattern: /UptimeRobot/i },
+  { name: "Datadog", category: "monitoring", pattern: /Datadog/i },
+  { name: "NewRelic", category: "monitoring", pattern: /NewRelic/i },
+  { name: "GTmetrix", category: "monitoring", pattern: /GTmetrix/i },
+  { name: "WebPageTest", category: "monitoring", pattern: /WebPageTest|wptagent/i },
 
   // ══════════════════════════════════════════════════════════
   //  Other known crawlers
