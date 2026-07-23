@@ -31,6 +31,16 @@ describe("proxy — legacy view redirects", () => {
     const res = proxy(makeRequest("/dashboard?view=nonsense"));
     expect(new URL(res.headers.get("location")!).searchParams.get("view")).toBe("overview");
   });
+
+  it("redirects status to health", () => {
+    const res = proxy(makeRequest("/dashboard?view=status"));
+    expect(new URL(res.headers.get("location")!).searchParams.get("view")).toBe("health");
+  });
+
+  it("redirects the singular bot to bots", () => {
+    const res = proxy(makeRequest("/dashboard?view=bot"));
+    expect(new URL(res.headers.get("location")!).searchParams.get("view")).toBe("bots");
+  });
 });
 
 describe("proxy — remembering last project/period", () => {

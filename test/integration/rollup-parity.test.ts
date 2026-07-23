@@ -261,15 +261,6 @@ describe.skipIf(!url)("rollup / raw AI parity", () => {
     await db.close();
   });
 
-  // Window = current UTC day, matching currentUtcDayWindow above, so raw and
-  // rollup see the same single-day data set.
-  function currentUtcDayWindow() {
-    const now = new Date();
-    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
-    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59, 999));
-    return { start, end };
-  }
-
   function confidenceMap(rows: { bot_name: string; bot_category: string; total_hits: number; verified_hits: number }[]) {
     return new Map(rows.map((r) => [`${r.bot_name}:${r.bot_category}`, {
       total: r.total_hits,
@@ -336,5 +327,110 @@ describe.skipIf(!url)("rollup / raw AI parity", () => {
     expect(rawStats.aiBotsAllWithConfidence).toBeDefined();
     expect(rollup.aiBotsAllWithConfidence).toEqual(rollup.aiBotsWithConfidence);
     expect(rawStats.aiBotsAllWithConfidence).toEqual(rawStats.aiBotsWithConfidence);
+  });
+});
+
+// categoryFilterSql (src/lib/db.ts) is a hand-built SQL string that's meant
+// to mirror normalizeBotCategory's (src/lib/categories.ts) legacy-row remap
+// at read time: rows written before a category was split out of a broader
+// one stay stored under the old value, and the filter clause is supposed to
+// pull them in anyway. normalizeBotCategory itself is covered by plain unit
+// tests (categories.test.ts), but that only proves the TS remap logic is
+// right — it says nothing about whether the separately-maintained SQL string
+// actually implements the same rule against a real database. This suite
+// inserts rows with the pre-split category values directly (bypassing
+// normalizeBotCategory, the way genuinely old rows would exist) and queries
+// through the real category-filtered code path for both the rollup and raw
+// query strategies.
+describe.skipIf(!url)("rollup / raw legacy-category-remap SQL parity", () => {
+  const LEGACY_PROJECT = "__vitest_integration_legacy_remap__";
+  // Legacy ai_crawler row for a bot AI_AGENT_BOTS claims — must be pulled in
+  // by category="ai_agent" and excluded by category="ai_training".
+  const AI_CRAWLER_AGENT_BOT = "ChatGPT-User";
+  // Legacy ai_crawler row for a bot neither AI_AGENT_BOTS nor AI_SEARCH_BOTS
+  // claims — falls through to ai_training (categories.ts:62-66's NOT IN
+  // branch) and must be excluded by category="ai_agent"/"ai_search".
+  const AI_CRAWLER_TRAINING_BOT = "__VitestLegacyTrainingBot__";
+  // Legacy generic row for a bot MONITORING_BOTS claims — must be pulled in
+  // by category="monitoring".
+  const GENERIC_MONITORING_BOT = "UptimeRobot";
+  // Legacy generic row for an ordinary generic bot — must stay excluded from
+  // category="monitoring" (the remap is scoped to MONITORING_BOTS members
+  // only, not every generic row).
+  const GENERIC_OTHER_BOT = "__VitestLegacyGenericOther__";
+
+  let db: DbClient;
+  let raw: ReturnType<typeof postgres>;
+
+  beforeAll(async () => {
+    db = createDbClient(url as string);
+    raw = postgres(url as string, { max: 1 });
+
+    const base = {
+      project_name: LEGACY_PROJECT,
+      environment: "test",
+      host: "example.test",
+      path: "/vitest-legacy",
+      query_string: "",
+      method: "GET",
+      status_code: 200,
+      confidence: "verified" as const,
+      user_agent: "VitestLegacyBot/1.0",
+      referer: "",
+      ip: "203.0.113.100",
+      country: "",
+      region: "",
+      city: "",
+      timezone: "",
+      deployment_url: "",
+      vercel_id: "",
+      is_api_route: false,
+      sample_rate: 1,
+      heartbeat: false,
+    };
+    await db.insertHit({ ...base, bot_name: AI_CRAWLER_AGENT_BOT, bot_category: "ai_crawler" });
+    await db.insertHit({ ...base, bot_name: AI_CRAWLER_TRAINING_BOT, bot_category: "ai_crawler" });
+    await db.insertHit({ ...base, bot_name: GENERIC_MONITORING_BOT, bot_category: "generic" });
+    await db.insertHit({ ...base, bot_name: GENERIC_OTHER_BOT, bot_category: "generic" });
+  });
+
+  afterAll(async () => {
+    await raw`DELETE FROM bot_hits WHERE project_name = ${LEGACY_PROJECT}`;
+    await raw`DELETE FROM bot_hits_daily WHERE project_name = ${LEGACY_PROJECT}`;
+    await raw`DELETE FROM bot_first_seen WHERE bot_name IN (${AI_CRAWLER_AGENT_BOT}, ${AI_CRAWLER_TRAINING_BOT}, ${GENERIC_MONITORING_BOT}, ${GENERIC_OTHER_BOT})`;
+    await raw.end();
+    await db.close();
+  });
+
+  it("category=ai_agent matches only the legacy ai_crawler row for an AI_AGENT_BOTS member, in both rollup and raw", async () => {
+    const { start, end } = currentUtcDayWindow();
+    const [rollup, rawStats] = await Promise.all([
+      db.fetchRollupStats(start, end, LEGACY_PROJECT, "ai_agent"),
+      db.fetchStatsBatch(start, end, LEGACY_PROJECT, "ai_agent"),
+    ]);
+    expect(rollup.total).toBe(1);
+    expect(rawStats.total).toBe(1);
+  });
+
+  it("category=ai_training matches only the legacy ai_crawler row for a non-agent/search bot, in both rollup and raw", async () => {
+    const { start, end } = currentUtcDayWindow();
+    const [rollup, rawStats] = await Promise.all([
+      db.fetchRollupStats(start, end, LEGACY_PROJECT, "ai_training"),
+      db.fetchStatsBatch(start, end, LEGACY_PROJECT, "ai_training"),
+    ]);
+    expect(rollup.total).toBe(1);
+    expect(rawStats.total).toBe(1);
+  });
+
+  it("category=monitoring matches only the legacy generic row for a MONITORING_BOTS member, in both rollup and raw", async () => {
+    const { start, end } = currentUtcDayWindow();
+    const [rollup, rawStats] = await Promise.all([
+      db.fetchRollupStats(start, end, LEGACY_PROJECT, "monitoring"),
+      db.fetchStatsBatch(start, end, LEGACY_PROJECT, "monitoring"),
+    ]);
+    // Not 2: GENERIC_OTHER_BOT is also bot_category='generic' but isn't a
+    // MONITORING_BOTS member, so it must stay excluded.
+    expect(rollup.total).toBe(1);
+    expect(rawStats.total).toBe(1);
   });
 });
