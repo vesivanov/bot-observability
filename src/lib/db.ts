@@ -4,6 +4,7 @@ import type {
   BotHitRow,
   BotCount,
   BotCategory,
+  BotStatusCodeCount,
   DailyCount,
   DailyCategoryCount,
   HourlyCount,
@@ -69,7 +70,7 @@ function categoryFilterSql(category: string | undefined, values: (string | numbe
 // company-mapping in src/lib/bot-companies.ts and the legacy remap sets in
 // src/lib/categories.ts. Used by the "AI crawls vs. visits" and AI per-bot
 // breakdown panels to scope raw/rollup rows to the AI subspace.
-const AI_BOT_NAMES_SQL = `'OAI-SearchBot','Claude-SearchBot','PerplexityBot','Gemini-Deep-Research','DuckAssistBot','YouBot','Cloudflare-AI-Search','ChatGPT-User','Claude-User','Claude-Web','Perplexity-User','GoogleAgent','MistralAI-User'`;
+const AI_BOT_NAMES_SQL = `'AI2Bot','Amazonbot','Andibot','Anthropic','Applebot-Extended','Bytespider','CCBot','Character-AI','ChatGPT-User','claude-code','Claude-SearchBot','Claude-User','Claude-Web','Cloudflare-AI-Search','Cohere','DeepSeekBot','Diffbot','DuckAssistBot','FacebookBot','FirecrawlAgent','Gemini-Deep-Research','GLM-Spider','Google-Cloud-Vertex','Google-Extended','Google-NotebookLM','GoogleAgent','GPTBot','Grok-DeepSearch','GrokBot','Groq-Bot','HuggingFaceBot','ImagesiftBot','KangarooBot','magpie-crawler','Meta-ExternalAgent','Meta-ExternalFetcher','meta-webindexer','MistralAI-User','MistralBot','OAI-SearchBot','OmgiliBot','Perplexity-User','PerplexityBot','PhindBot','ResearchBot','SeekrBot','Timpibot','VelenPublicBot','Webzio','xAI-Bot','YouBot'`;
 const AI_CAT_SQL = `'ai_training','ai_search','ai_agent','ai_crawler'`;
 
 export function createDbClient(databaseUrl: string) {
@@ -736,10 +737,44 @@ export function createDbClient(databaseUrl: string) {
       dailyStatus: parse<DailyStatusCount[]>(row.daily_status_json),
       statusCodes: parse<StatusCodeCount[]>(row.status_codes_json),
       projectStatuses: parse<ProjectStatusBreakdown[]>(row.project_statuses_json),
-      botStatusCodes: rawBotStatusCodes.map((r) => ({ ...r, bot_category: normalizeBotCategory(r.bot_name, r.bot_category) as BotCategory })),
+      botStatusCodes: (() => {
+        const map = new Map<string, BotStatusCodeCount>();
+        for (const r of rawBotStatusCodes) {
+          const cat = normalizeBotCategory(r.bot_name, r.bot_category) as BotCategory;
+          const key = `${r.bot_name}:${cat}:${r.status_code}`;
+          const cur = map.get(key);
+          if (cur) {
+            cur.count += r.count;
+            if (r.last_seen > cur.last_seen) cur.last_seen = r.last_seen;
+            if (r.count > cur.count) { cur.top_project = r.top_project; cur.top_path = r.top_path; }
+          } else {
+            map.set(key, { ...r, bot_category: cat });
+          }
+        }
+        return Array.from(map.values()).sort((a, b) => b.count - a.count).slice(0, 16);
+      })(),
       pageStatusCodes: parse<PageStatusCodeCount[]>(row.page_status_codes_json),
       failingPaths: parse<FailingPath[]>(row.failing_paths_json),
-      botStatuses: rawBotStatuses.map((r) => ({ ...r, bot_category: normalizeBotCategory(r.bot_name, r.bot_category) as BotCategory })),
+      botStatuses: (() => {
+        const map = new Map<string, {
+          bot_name: string; bot_category: BotCategory; total_hits: number;
+          error_hits: number; ua_only_hits: number; top_status_code: number; last_seen: string;
+        }>();
+        for (const r of rawBotStatuses) {
+          const cat = normalizeBotCategory(r.bot_name, r.bot_category) as BotCategory;
+          const key = `${r.bot_name}:${cat}`;
+          const cur = map.get(key);
+          if (cur) {
+            cur.total_hits += r.total_hits;
+            cur.error_hits += r.error_hits;
+            cur.ua_only_hits += r.ua_only_hits;
+            if (r.last_seen > cur.last_seen) { cur.last_seen = r.last_seen; cur.top_status_code = r.top_status_code; }
+          } else {
+            map.set(key, { ...r, bot_category: cat });
+          }
+        }
+        return Array.from(map.values()).sort((a, b) => b.error_hits - a.error_hits || b.ua_only_hits - a.ua_only_hits || b.total_hits - a.total_hits);
+      })(),
       sensitiveHits: parse<SensitivePathHit[]>(row.sensitive_hits_json),
     };
   }

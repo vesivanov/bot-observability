@@ -16,6 +16,9 @@ export const AI_SEARCH_BOTS = new Set([
   "DuckAssistBot",
   "YouBot",
   "Cloudflare-AI-Search",
+  "PhindBot",
+  "Andibot",
+  "Grok-DeepSearch",
   // Per Meta's docs, Meta-WebIndexer is an AI-search index crawler (peer of
   // OAI-SearchBot/Claude-SearchBot), not a training crawler — see bots.ts.
   "meta-webindexer",
