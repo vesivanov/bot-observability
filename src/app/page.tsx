@@ -4,7 +4,18 @@ import { getBotLogToken, isSessionValid, SESSION_COOKIE_NAME } from "@/lib/auth"
 import { CATEGORY_ORDER, categoryLabel, categoryMeta } from "@/lib/categories";
 import { CrawlerMixBars } from "@/components/charts/crawler-mix-bars";
 import { BotName } from "@/components/bot-name";
-import { Panel, StatTile, BarMeter, botHref, errorRateAccent } from "@/app/dashboard/shared";
+import { LandingPreviewTabs } from "@/components/landing-preview-tabs";
+import {
+  Panel,
+  StatTile,
+  BarMeter,
+  botHref,
+  errorRateAccent,
+  pct,
+  statusClassTone,
+  statusClassLabel,
+  StatusCodeChip,
+} from "@/app/dashboard/shared";
 
 const REPO_URL = "https://github.com/vesivanov/bot-observability";
 
@@ -60,6 +71,24 @@ const PREVIEW_TOP_BOTS: { name: string; category: string; hits: number }[] = [
 ];
 const PREVIEW_MAX_BOT_HITS = Math.max(...PREVIEW_TOP_BOTS.map((b) => b.hits));
 
+// Status-class split for the same 18,090-hit example dataset as
+// PREVIEW_CATEGORIES above (17400 + 473 + 160 + 57 = 18090), so the error
+// rate/count shown here matches PREVIEW_ERROR_HITS/PREVIEW_ERROR_RATE exactly.
+const PREVIEW_STATUS_BUCKETS: { status_class: string; count: number }[] = [
+  { status_class: "2xx", count: 17400 },
+  { status_class: "3xx", count: 473 },
+  { status_class: "4xx", count: 160 },
+  { status_class: "5xx", count: 57 },
+];
+const PREVIEW_MAX_STATUS = Math.max(...PREVIEW_STATUS_BUCKETS.map((b) => b.count));
+
+// Illustrative raw-event rows for the "Raw events" tab teaser.
+const PREVIEW_EVENTS: { time: string; bot: string; category: string; statusCode: number; path: string; project: string }[] = [
+  { time: "0:04 ago", bot: "GPTBot", category: "ai_training", statusCode: 200, path: "/blog/how-ai-crawlers-work", project: "marketing-site" },
+  { time: "0:41 ago", bot: "Googlebot", category: "search_crawler", statusCode: 200, path: "/pricing", project: "marketing-site" },
+  { time: "1:12 ago", bot: "AhrefsBot", category: "seo_crawler", statusCode: 404, path: "/old-landing-page", project: "marketing-site" },
+];
+
 const HOW_IT_WORKS = [
   ["1", "Send events", "Your app POSTs each request's user agent, path, and status code to /api/bot-hit as it's served — from middleware, an edge function, or backend logging code."],
   ["2", "Bots get identified", "Every event is matched against 130+ known crawler patterns and (where possible) verified via reverse-DNS or IP range, server-side, on the way in."],
@@ -103,57 +132,82 @@ export default async function HomePage() {
 
   return (
     <div className="mx-auto max-w-5xl px-5 py-12 sm:px-6">
-      <section className="max-w-2xl">
-        <p className="mb-3 text-xs font-medium uppercase tracking-wider text-amber-300">Open source · self-hosted</p>
-        <h1 className="text-3xl font-semibold tracking-tight text-neutral-100 sm:text-4xl">
-          Bot Observability
-        </h1>
-        <p className="mt-4 text-sm leading-6 text-neutral-400">
-          See exactly which AI crawlers, search engines, and other bots are reading your sites, which pages they hit, and whether those requests are healthy, broken, or worth blocking.
-        </p>
-        <p className="mt-3 text-sm leading-6 text-neutral-500">
-          It&apos;s a Next.js + Postgres app you run yourself: point it at your own database, drop one API call into your app, and traffic starts showing up in the dashboard below.
-        </p>
+      <section className="grid gap-8 lg:grid-cols-[1.1fr_1fr] lg:items-center">
+        <div className="max-w-2xl">
+          <p className="mb-3 text-xs font-medium uppercase tracking-wider text-amber-300">Open source · self-hosted</p>
+          <h1 className="text-3xl font-semibold tracking-tight text-neutral-100 sm:text-4xl">
+            Bot Observability
+          </h1>
+          <p className="mt-4 text-sm leading-6 text-neutral-400">
+            See exactly which AI crawlers, search engines, and other bots are reading your sites, which pages they hit, and whether those requests are healthy, broken, or worth blocking.
+          </p>
+          <p className="mt-3 text-sm leading-6 text-neutral-500">
+            It&apos;s a Next.js + Postgres app you run yourself: point it at your own database, drop one API call into your app, and traffic starts showing up in the dashboard below.
+          </p>
 
-        <div className="mt-6 flex flex-wrap items-center gap-3">
-          <a
-            href={REPO_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 rounded border border-neutral-600 bg-neutral-200 px-4 py-2 text-sm font-medium text-neutral-950 hover:bg-white"
-          >
-            <GitHubMark className="h-4 w-4" />
-            View on GitHub
-          </a>
-          {authed ? (
-            <Link href="/dashboard" className="rounded border border-neutral-800 px-4 py-2 text-sm font-medium text-neutral-300 hover:border-neutral-600 hover:text-neutral-100">
-              Open dashboard
-            </Link>
+          <div className="mt-6 flex flex-wrap items-center gap-3">
+            <a
+              href={REPO_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 rounded border border-neutral-600 bg-neutral-200 px-4 py-2 text-sm font-medium text-neutral-950 hover:bg-white"
+            >
+              <GitHubMark className="h-4 w-4" />
+              View on GitHub
+            </a>
+            {authed ? (
+              <Link href="/dashboard" className="rounded border border-neutral-800 px-4 py-2 text-sm font-medium text-neutral-300 hover:border-neutral-600 hover:text-neutral-100">
+                Open dashboard
+              </Link>
+            ) : null}
+            <a href="#get-started" className="rounded border border-neutral-800 px-4 py-2 text-sm font-medium text-neutral-300 hover:border-neutral-600 hover:text-neutral-100">
+              Get started
+            </a>
+          </div>
+
+          {!authed ? (
+            <details className="mt-5 max-w-md">
+              <summary className="inline-flex w-fit cursor-pointer list-none items-center rounded border border-neutral-800 px-4 py-2 text-sm font-medium text-neutral-300 hover:border-neutral-600 hover:text-neutral-100 [&::-webkit-details-marker]:hidden">
+                Already running your own instance? Sign in
+              </summary>
+              <form action="/login" method="POST" className="mt-3 flex gap-2">
+                <input
+                  name="token"
+                  type="password"
+                  placeholder="Access token"
+                  autoFocus
+                  className="min-h-10 flex-1 rounded border border-neutral-800 bg-neutral-950 px-3 text-sm text-foreground outline-none placeholder:text-neutral-600 focus:border-neutral-600"
+                />
+                <button type="submit" className="rounded border border-neutral-600 bg-neutral-200 px-4 text-sm font-medium text-neutral-950 hover:bg-white">
+                  Sign in
+                </button>
+              </form>
+            </details>
           ) : null}
-          <a href="#get-started" className="rounded border border-neutral-800 px-4 py-2 text-sm font-medium text-neutral-300 hover:border-neutral-600 hover:text-neutral-100">
-            Get started
-          </a>
         </div>
 
-        {!authed ? (
-          <details className="mt-5 max-w-md">
-            <summary className="inline-flex w-fit cursor-pointer list-none items-center rounded border border-neutral-800 px-4 py-2 text-sm font-medium text-neutral-300 hover:border-neutral-600 hover:text-neutral-100 [&::-webkit-details-marker]:hidden">
-              Already running your own instance? Sign in
-            </summary>
-            <form action="/login" method="POST" className="mt-3 flex gap-2">
-              <input
-                name="token"
-                type="password"
-                placeholder="Access token"
-                autoFocus
-                className="min-h-10 flex-1 rounded border border-neutral-800 bg-neutral-950 px-3 text-sm text-foreground outline-none placeholder:text-neutral-600 focus:border-neutral-600"
-              />
-              <button type="submit" className="rounded border border-neutral-600 bg-neutral-200 px-4 text-sm font-medium text-neutral-950 hover:bg-white">
-                Sign in
-              </button>
-            </form>
-          </details>
-        ) : null}
+        <Panel title="Top bots this week" meta="Example data">
+          <div className="space-y-1.5">
+            {PREVIEW_TOP_BOTS.slice(0, 6).map((bot) => (
+              <div key={bot.name} className="grid grid-cols-[1.1fr_1fr_4rem] items-center gap-3 text-xs">
+                <span className="flex min-w-0 items-center gap-1.5 truncate">
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${categoryMeta(bot.category).dot}`} />
+                  <BotName name={bot.name} href={botHref({ bot: bot.name, period: "7" })} className="truncate font-medium text-neutral-100 hover:text-white" />
+                </span>
+                <BarMeter value={(bot.hits / PREVIEW_MAX_BOT_HITS) * 100} />
+                <span className="text-right font-mono text-neutral-100">{bot.hits.toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2 border-t border-neutral-800/80 pt-3">
+            <StatTile label="Bot hits (7d)" value={PREVIEW_TOTAL.toLocaleString()} />
+            <StatTile
+              label="AI share"
+              value={`${((PREVIEW_AI_HITS / PREVIEW_TOTAL) * 100).toFixed(1)}%`}
+              detail={`${PREVIEW_AI_HITS.toLocaleString()} hits`}
+            />
+          </div>
+        </Panel>
       </section>
 
       <section className="mt-12 border-t border-neutral-800 pt-8">
@@ -162,46 +216,103 @@ export default async function HomePage() {
           <span className="text-[11px] text-neutral-600">Example data — not a live query</span>
         </div>
         <p className="mt-2 max-w-2xl text-xs leading-5 text-neutral-500">
-          A look at the dashboard&apos;s Overview tab — the same panels, colors, and bot legend you&apos;ll see once your own traffic starts flowing in.
+          Flip through the same tabs the real dashboard has — the numbers below are illustrative, but the panels, colors, and layout are exactly what you&apos;ll see once your own traffic starts flowing in.
         </p>
 
-        <div className="mt-4 space-y-3">
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <StatTile label="Bot hits (7d)" value={PREVIEW_TOTAL.toLocaleString()} />
-            <StatTile
-              label="AI share"
-              value={`${((PREVIEW_AI_HITS / PREVIEW_TOTAL) * 100).toFixed(1)}%`}
-              detail={`${PREVIEW_AI_HITS.toLocaleString()} hits`}
-            />
-            <StatTile
-              label="Error rate"
-              value={`${PREVIEW_ERROR_RATE}%`}
-              detail={`${PREVIEW_ERROR_HITS.toLocaleString()} 4xx/5xx hits`}
-              accent={errorRateAccent(PREVIEW_ERROR_RATE)}
-            />
-            <StatTile label="Data health" value="Healthy" detail="Heartbeat 2m ago · Event 4s ago" accent="text-emerald-300" />
-          </div>
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <StatTile label="Bot hits (7d)" value={PREVIEW_TOTAL.toLocaleString()} />
+          <StatTile
+            label="AI share"
+            value={`${((PREVIEW_AI_HITS / PREVIEW_TOTAL) * 100).toFixed(1)}%`}
+            detail={`${PREVIEW_AI_HITS.toLocaleString()} hits`}
+          />
+          <StatTile
+            label="Error rate"
+            value={`${PREVIEW_ERROR_RATE}%`}
+            detail={`${PREVIEW_ERROR_HITS.toLocaleString()} 4xx/5xx hits`}
+            accent={errorRateAccent(PREVIEW_ERROR_RATE)}
+          />
+          <StatTile label="Data health" value="Healthy" detail="Heartbeat 2m ago · Event 4s ago" accent="text-emerald-300" />
+        </div>
 
-          <div className="grid gap-3 lg:grid-cols-2">
-            <Panel title="Crawler mix" meta="AI training leads">
-              <CrawlerMixBars data={PREVIEW_CATEGORIES} total={PREVIEW_TOTAL} categoryHref={previewCategoryHref} />
-            </Panel>
-            <Panel title="Top bots" meta={`${PREVIEW_TOP_BOTS.length} bots`}>
-              <div className="space-y-1.5">
-                {PREVIEW_TOP_BOTS.map((bot) => (
-                  <div key={bot.name} className="grid grid-cols-[1.1fr_1fr_4.5rem] items-center gap-3 text-xs">
-                    <span className="flex min-w-0 items-center gap-1.5 truncate">
-                      <span className={`h-2 w-2 shrink-0 rounded-full ${categoryMeta(bot.category).dot}`} />
-                      <BotName name={bot.name} href={botHref({ bot: bot.name, period: "7" })} className="truncate font-medium text-neutral-100 hover:text-white" />
-                    </span>
-                    <BarMeter value={(bot.hits / PREVIEW_MAX_BOT_HITS) * 100} />
-                    <span className="text-right font-mono text-neutral-100">{bot.hits.toLocaleString()}</span>
-                  </div>
-                ))}
-              </div>
-              <p className="mt-2 text-xs text-neutral-600">Hover a bot name for what it is and why it&apos;s crawling.</p>
-            </Panel>
-          </div>
+        <div className="mt-4">
+          <LandingPreviewTabs
+            tabs={[
+              {
+                key: "overview",
+                label: "Overview",
+                content: (
+                  <Panel title="Crawler mix" meta="AI training leads">
+                    <CrawlerMixBars data={PREVIEW_CATEGORIES} total={PREVIEW_TOTAL} categoryHref={previewCategoryHref} />
+                  </Panel>
+                ),
+              },
+              {
+                key: "bots",
+                label: "Bots",
+                content: (
+                  <Panel title="Top bots" meta={`${PREVIEW_TOP_BOTS.length} bots`}>
+                    <div className="space-y-1.5">
+                      {PREVIEW_TOP_BOTS.map((bot) => (
+                        <div key={bot.name} className="grid grid-cols-[1.1fr_1fr_4.5rem] items-center gap-3 text-xs">
+                          <span className="flex min-w-0 items-center gap-1.5 truncate">
+                            <span className={`h-2 w-2 shrink-0 rounded-full ${categoryMeta(bot.category).dot}`} />
+                            <BotName name={bot.name} href={botHref({ bot: bot.name, period: "7" })} className="truncate font-medium text-neutral-100 hover:text-white" />
+                          </span>
+                          <BarMeter value={(bot.hits / PREVIEW_MAX_BOT_HITS) * 100} />
+                          <span className="text-right font-mono text-neutral-100">{bot.hits.toLocaleString()}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-xs text-neutral-600">Hover a bot name for what it is and why it&apos;s crawling.</p>
+                  </Panel>
+                ),
+              },
+              {
+                key: "health",
+                label: "Health",
+                content: (
+                  <Panel title="Status classes" meta="response mix">
+                    <div className="space-y-2">
+                      {PREVIEW_STATUS_BUCKETS.map((bucket) => (
+                        <div key={bucket.status_class}>
+                          <div className="mb-1 flex items-center justify-between text-xs">
+                            <span className="font-mono text-neutral-300">{statusClassLabel(bucket.status_class)}</span>
+                            <span className="font-mono text-neutral-500">{bucket.count.toLocaleString()} · {pct(bucket.count, PREVIEW_TOTAL)}%</span>
+                          </div>
+                          <BarMeter value={(bucket.count / PREVIEW_MAX_STATUS) * 100} color={statusClassTone(bucket.status_class)} />
+                        </div>
+                      ))}
+                    </div>
+                    <p className="mt-3 text-xs text-neutral-600">Failing paths, sensitive-path probes, and per-bot triage live on the Health tab.</p>
+                  </Panel>
+                ),
+              },
+              {
+                key: "events",
+                label: "Raw events",
+                content: (
+                  <Panel title="Raw events" meta="filterable log">
+                    <div className="space-y-1.5">
+                      {PREVIEW_EVENTS.map((e, i) => (
+                        <div key={i} className="grid grid-cols-[4.5rem_1fr_5.5rem] items-center gap-3 text-xs">
+                          <span className="text-neutral-600">{e.time}</span>
+                          <span className="flex min-w-0 items-center gap-1.5 truncate">
+                            <span className={`h-2 w-2 shrink-0 rounded-full ${categoryMeta(e.category).dot}`} />
+                            <BotName name={e.bot} href={botHref({ bot: e.bot, period: "7" })} className="shrink-0 font-medium text-neutral-100 hover:text-white" />
+                            <span className="truncate font-mono text-neutral-500">{e.path}</span>
+                          </span>
+                          <span className="flex justify-end">
+                            <StatusCodeChip statusCode={e.statusCode} />
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </Panel>
+                ),
+              },
+            ]}
+          />
         </div>
       </section>
 
