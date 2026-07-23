@@ -77,7 +77,7 @@ export function BotsTable({ bots, period, projectFilter }: { bots: BotDetail[]; 
     <SortableTable
       columns={columns}
       rows={bots}
-      rowKey={(b) => `${b.bot_name}:${b.bot_category}`}
+      rowKey={(b) => `${b.bot_name}:${normalizeBotCategory(b.bot_name, b.bot_category)}`}
       defaultSortKey="hits"
     />
   );

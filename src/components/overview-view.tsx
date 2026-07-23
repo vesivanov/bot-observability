@@ -341,7 +341,7 @@ function AiCrawlsVsVisits({ data }: { data: BotConfidenceCount[] }) {
     const entry = perCompany.get(company) ?? { crawls: 0, visits: 0 };
     if (category === "ai_agent") {
       entry.visits += row.total_hits;
-    } else if (category === "ai_training" || category === "ai_search" || category === "ai_crawler") {
+    } else if (category === "ai_training" || category === "ai_search") {
       entry.crawls += row.total_hits;
     }
     perCompany.set(company, entry);
