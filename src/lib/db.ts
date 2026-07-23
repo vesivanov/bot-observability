@@ -50,6 +50,13 @@ function categoryFilterSql(category: string | undefined, values: (string | numbe
   return `AND bot_category = $${values.length}`;
 }
 
+// AI bot identities the dashboard treats specially —— mirrored in JS by the
+// company-mapping in src/lib/bot-companies.ts and the legacy remap sets in
+// src/lib/categories.ts. Used by the "AI crawls vs. visits" and AI per-bot
+// breakdown panels to scope raw/rollup rows to the AI subspace.
+const AI_BOT_NAMES_SQL = `'OAI-SearchBot','Claude-SearchBot','PerplexityBot','Gemini-Deep-Research','DuckAssistBot','YouBot','Cloudflare-AI-Search','ChatGPT-User','Claude-User','Claude-Web','Perplexity-User','GoogleAgent','MistralAI-User'`;
+const AI_CAT_SQL = `'ai_training','ai_search','ai_agent','ai_crawler'`;
+
 export function createDbClient(databaseUrl: string) {
   const sql = postgres(databaseUrl, {
     max: 1,
@@ -731,8 +738,39 @@ export function createDbClient(databaseUrl: string) {
     }
     const categoryClause = categoryFilterSql(category, values);
 
-    const AI_BOT_NAMES_SQL = `'OAI-SearchBot','Claude-SearchBot','PerplexityBot','Gemini-Deep-Research','DuckAssistBot','YouBot','Cloudflare-AI-Search','ChatGPT-User','Claude-User','Claude-Web','Perplexity-User','GoogleAgent','MistralAI-User'`;
-    const AI_CAT_SQL = `'ai_training','ai_search','ai_agent','ai_crawler'`;
+    // bot_conf_ai_all exists so the "AI crawls vs. visits" panel can show the
+    // full AI space even when a single AI chip is selected. When no chip is
+    // selected, base_nocat === base so bot_conf_ai_all === bot_conf_ai and we
+    // skip the extra bot_hits scan entirely (the JS layer falls back to
+    // aiBotsWithConfidence for crawls-vs-visits). Both CTEs are conditional
+    // together because bot_conf_ai_all references base_nocat.
+    const hasCategoryFilter = categoryClause.length > 0;
+    const baseNocatCte = hasCategoryFilter ? `,
+      base_nocat AS (
+        SELECT bot_name, bot_category, confidence, project_name, path, status_code, created_at, sample_rate
+        FROM bot_hits
+        WHERE created_at > $1
+          AND created_at <= $2
+          AND heartbeat = FALSE
+          ${projectClause}
+      )` : "";
+    const botConfAiAllCte = hasCategoryFilter ? `,
+      -- AI bot aggregation reading from base_nocat (no category chip filter,
+      -- project-scoped). Carries every AI category together so the "AI crawls
+      -- vs. visits" panel can contrast crawls AND visits even when a single AI
+      -- chip filters the per-bot breakdown above.
+      bot_conf_ai_all AS (
+        SELECT bot_name, bot_category,
+          ROUND(SUM(${HIT_WEIGHT_SQL}))::int as total_hits,
+          ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified'))::int as verified_hits,
+          ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'ua_only'))::int as ua_only_hits,
+          STRING_AGG(DISTINCT project_name, ', ' ORDER BY project_name) as projects,
+          MAX(created_at)::text as last_seen
+        FROM base_nocat
+        WHERE bot_category IN (${AI_CAT_SQL})
+          OR bot_name IN (${AI_BOT_NAMES_SQL})
+        GROUP BY bot_name, bot_category ORDER BY total_hits DESC LIMIT 50
+      )` : "";
 
     const result = await sql.unsafe(`
       WITH base AS (
@@ -743,7 +781,7 @@ export function createDbClient(databaseUrl: string) {
           AND heartbeat = FALSE
           ${projectClause}
           ${categoryClause}
-      ),
+      )${baseNocatCte},
       base_proj AS (
         SELECT * FROM base WHERE project_name != ''
       ),
@@ -798,7 +836,7 @@ export function createDbClient(databaseUrl: string) {
         WHERE bot_category IN (${AI_CAT_SQL})
           OR bot_name IN (${AI_BOT_NAMES_SQL})
         GROUP BY bot_name, bot_category ORDER BY total_hits DESC LIMIT 50
-      ),
+      )${botConfAiAllCte},
       ps_bot_rank AS (
         SELECT project_name, bot_name,
           ROW_NUMBER() OVER (PARTITION BY project_name ORDER BY SUM(${HIT_WEIGHT_SQL}) DESC, bot_name) as rank
@@ -867,7 +905,8 @@ export function createDbClient(databaseUrl: string) {
         COALESCE((SELECT json_agg(row_to_json(t)) FROM (SELECT * FROM projects) t), '[]') as projects_json,
         COALESCE((SELECT json_agg(row_to_json(t)) FROM (SELECT * FROM categories_raw) t), '[]') as categories_json,
         COALESCE((SELECT json_agg(row_to_json(t)) FROM (SELECT * FROM bot_conf_all) t), '[]') as bot_conf_all_json,
-        COALESCE((SELECT json_agg(row_to_json(t)) FROM (SELECT * FROM bot_conf_ai) t), '[]') as bot_conf_ai_json,
+        COALESCE((SELECT json_agg(row_to_json(t)) FROM (SELECT * FROM bot_conf_ai) t), '[]') as bot_conf_ai_json${hasCategoryFilter ? `,
+        COALESCE((SELECT json_agg(row_to_json(t)) FROM (SELECT * FROM bot_conf_ai_all) t), '[]') as bot_conf_ai_all_json,` : ","}
         COALESCE((SELECT json_agg(row_to_json(t)) FROM (SELECT * FROM proj_summaries) t), '[]') as proj_summaries_json,
         COALESCE((SELECT json_agg(row_to_json(t)) FROM (SELECT * FROM tpp) t), '[]') as tpp_json,
         COALESCE((SELECT json_agg(row_to_json(t)) FROM (SELECT * FROM new_bots) t), '[]') as new_bots_json
@@ -885,6 +924,9 @@ export function createDbClient(databaseUrl: string) {
     const rawCategories = parseJson<{ bot_name: string; bot_category: string; count: number }[]>(row.categories_json);
     const rawBotConfAll = parseJson<BotConfidenceCount[]>(row.bot_conf_all_json);
     const rawBotConfAi = parseJson<BotConfidenceCount[]>(row.bot_conf_ai_json);
+    const rawBotConfAiAll = hasCategoryFilter
+      ? parseJson<BotConfidenceCount[]>(row.bot_conf_ai_all_json)
+      : rawBotConfAi;
 
     const topBotsTotals = new Map<string, BotCount>();
     for (const r of rawTopBots) {
@@ -919,6 +961,7 @@ export function createDbClient(databaseUrl: string) {
 
     const topBotsWithConfidence = rawBotConfAll.map(r => ({ ...r, bot_category: normalizeBotCategory(r.bot_name, r.bot_category) as BotCategory })).sort((a, b) => b.total_hits - a.total_hits).slice(0, 10);
     const aiBotsWithConfidence = rawBotConfAi.map(r => ({ ...r, bot_category: normalizeBotCategory(r.bot_name, r.bot_category) as BotCategory })).sort((a, b) => b.total_hits - a.total_hits);
+    const aiBotsAllWithConfidence = rawBotConfAiAll.map(r => ({ ...r, bot_category: normalizeBotCategory(r.bot_name, r.bot_category) as BotCategory })).sort((a, b) => b.total_hits - a.total_hits);
 
     return {
       topBots,
@@ -932,6 +975,7 @@ export function createDbClient(databaseUrl: string) {
       projectSummaries: parseJson<ProjectSummary[]>(row.proj_summaries_json),
       topBotsWithConfidence,
       aiBotsWithConfidence,
+      aiBotsAllWithConfidence,
       topPagesByProject: parseJson<ProjectPageCount[]>(row.tpp_json),
       categories,
       newBots: parseJson<NewBot[]>(row.new_bots_json),
@@ -952,6 +996,33 @@ export function createDbClient(databaseUrl: string) {
       projectClause = `AND project_name = $${values.length}`;
     }
     const categoryClause = categoryFilterSql(category, values);
+
+    // Conditional mirrors of fetchStatsBatch's base_nocat / bot_conf_ai_all —
+    // emitted only when a chip filter exists so the unfiltered AI scan is
+    // skipped when no filter is applied. JS parses result by column name, so
+    // column order doesn't matter.
+    const hasCategoryFilter = categoryClause.length > 0;
+    const baseNocatCte = hasCategoryFilter ? `,
+      base_nocat AS (
+        SELECT day, project_name, bot_name, bot_category, status_class, hits, verified_hits
+        FROM bot_hits_daily
+        WHERE day >= $1::date AND day <= $2::date
+          ${projectClause}
+      )` : "";
+    const botConfAiAllCte = hasCategoryFilter ? `,
+      bot_conf_ai_all AS (
+        SELECT base_nocat.bot_name, base_nocat.bot_category,
+          SUM(base_nocat.hits)::int as total_hits,
+          SUM(base_nocat.verified_hits)::int as verified_hits,
+          (SUM(base_nocat.hits) - SUM(base_nocat.verified_hits))::int as ua_only_hits,
+          STRING_AGG(DISTINCT base_nocat.project_name, ', ' ORDER BY base_nocat.project_name) as projects,
+          COALESCE(MAX(bfs.last_seen)::text, '') as last_seen
+        FROM base_nocat
+        LEFT JOIN bot_first_seen bfs ON bfs.bot_name = base_nocat.bot_name
+        WHERE base_nocat.bot_category IN (${AI_CAT_SQL})
+          OR base_nocat.bot_name IN (${AI_BOT_NAMES_SQL})
+        GROUP BY base_nocat.bot_name, base_nocat.bot_category ORDER BY total_hits DESC LIMIT 50
+      )` : "";
 
     const result = await sql.unsafe(`
       WITH base AS (
@@ -994,7 +1065,22 @@ export function createDbClient(databaseUrl: string) {
         LEFT JOIN bot_first_seen bfs ON bfs.bot_name = b.bot_name
         GROUP BY b.bot_name, b.bot_category
         ORDER BY total_hits DESC LIMIT 10
-      )
+      ),
+      -- neo-mirror of fetchStatsBatch.bot_conf_ai: per-bot AI aggregation
+      -- scoped by the chip filter (base) for the AI per-bot breakdown panel.
+      bot_conf_ai AS (
+        SELECT base.bot_name, base.bot_category,
+          SUM(base.hits)::int as total_hits,
+          SUM(base.verified_hits)::int as verified_hits,
+          (SUM(base.hits) - SUM(base.verified_hits))::int as ua_only_hits,
+          STRING_AGG(DISTINCT base.project_name, ', ' ORDER BY base.project_name) as projects,
+          COALESCE(MAX(bfs.last_seen)::text, '') as last_seen
+        FROM base
+        LEFT JOIN bot_first_seen bfs ON bfs.bot_name = base.bot_name
+        WHERE base.bot_category IN (${AI_CAT_SQL})
+          OR base.bot_name IN (${AI_BOT_NAMES_SQL})
+        GROUP BY base.bot_name, base.bot_category ORDER BY total_hits DESC LIMIT 50
+      )${baseNocatCte}${botConfAiAllCte}
       SELECT
         (SELECT count FROM total) AS total_count,
         (SELECT error_count FROM total) AS error_count,
@@ -1003,7 +1089,9 @@ export function createDbClient(databaseUrl: string) {
         COALESCE((SELECT json_agg(row_to_json(t)) FROM (SELECT * FROM daily_cats) t), '[]') AS daily_cats_json,
         COALESCE((SELECT json_agg(row_to_json(t)) FROM (SELECT * FROM daily_status) t), '[]') AS daily_status_json,
         COALESCE((SELECT json_agg(row_to_json(t)) FROM (SELECT * FROM categories_raw) t), '[]') AS categories_json,
-        COALESCE((SELECT json_agg(row_to_json(t)) FROM (SELECT * FROM top_bots) t), '[]') AS top_bots_json
+        COALESCE((SELECT json_agg(row_to_json(t)) FROM (SELECT * FROM top_bots) t), '[]') AS top_bots_json,
+        COALESCE((SELECT json_agg(row_to_json(t)) FROM (SELECT * FROM bot_conf_ai) t), '[]') AS bot_conf_ai_json${hasCategoryFilter ? `,
+        COALESCE((SELECT json_agg(row_to_json(t)) FROM (SELECT * FROM bot_conf_ai_all) t), '[]') AS bot_conf_ai_all_json` : ""}
     `, values);
 
     const row = (result as Record<string, unknown>[])[0];
@@ -1063,6 +1151,13 @@ export function createDbClient(databaseUrl: string) {
     }
     const topBots = Array.from(topBotsTotals.values()).sort((a, b) => b.total_hits - a.total_hits).slice(0, 10);
 
+    const rawBotConfAi = parseJson<BotConfidenceCount[]>(row.bot_conf_ai_json);
+    const rawBotConfAiAll = hasCategoryFilter
+      ? parseJson<BotConfidenceCount[]>(row.bot_conf_ai_all_json)
+      : rawBotConfAi;
+    const aiBotsWithConfidence = rawBotConfAi.map((r) => ({ ...r, bot_category: normalizeBotCategory(r.bot_name, r.bot_category) as BotCategory })).sort((a, b) => b.total_hits - a.total_hits);
+    const aiBotsAllWithConfidence = rawBotConfAiAll.map((r) => ({ ...r, bot_category: normalizeBotCategory(r.bot_name, r.bot_category) as BotCategory })).sort((a, b) => b.total_hits - a.total_hits);
+
     return {
       total: (row.total_count as number) ?? 0,
       errorHits: (row.error_count as number) ?? 0,
@@ -1072,6 +1167,8 @@ export function createDbClient(databaseUrl: string) {
       dailyStatus,
       categories,
       topBots,
+      aiBotsWithConfidence,
+      aiBotsAllWithConfidence,
     };
   }
 

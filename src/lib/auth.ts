@@ -3,7 +3,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 const LOGIN_RATE_LIMIT = 10;
 const LOGIN_WINDOW_MS = 60_000;
 const SESSION_VERSION = "v1";
-const SESSION_TTL_SECONDS = 60 * 60 * 12;
+const SESSION_TTL_SECONDS = 60 * 60 * 24 * 365;
 
 export const SESSION_COOKIE_NAME = "bot_session";
 export const LEGACY_COOKIE_NAME = "bot_token";

@@ -138,7 +138,8 @@ export async function OverviewViewServer({
           knownStatusHits: currentRollup.knownStatusHits,
           categories: currentRollup.categories,
           topBotsWithConfidence: currentRollup.topBots,
-          aiBotsWithConfidence: [],
+          aiBotsWithConfidence: currentRollup.aiBotsWithConfidence,
+          aiBotsAllWithConfidence: currentRollup.aiBotsAllWithConfidence,
           newBots: [],
           topPagesByProject: undefined,
         }}
@@ -158,6 +159,7 @@ export async function OverviewViewServer({
         period={period}
         periodDays={periodDays}
         projectFilter={projectFilter}
+        categoryFilter={categoryFilter}
         latestHeartbeat={meta.latestHeartbeat}
         latestEvent={meta.latestEvent}
         referenceTime={periodEnd}
@@ -188,6 +190,7 @@ export async function OverviewViewServer({
       period={period}
       periodDays={periodDays}
       projectFilter={projectFilter}
+      categoryFilter={categoryFilter}
       latestHeartbeat={meta.latestHeartbeat}
       latestEvent={meta.latestEvent}
       referenceTime={periodEnd}
