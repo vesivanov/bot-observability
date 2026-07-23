@@ -25,8 +25,10 @@ export const AI_AGENT_BOTS = new Set([
   "ChatGPT-User",
   "Claude-User",
   "Claude-Web",
+  "claude-code",
   "Perplexity-User",
   "GoogleAgent",
+  "Google-NotebookLM",
   "MistralAI-User",
   // Meta's user-triggered, on-demand fetcher (peer of ChatGPT-User /
   // Claude-User / Perplexity-User) — see bots.ts.
