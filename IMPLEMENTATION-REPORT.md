@@ -1,6 +1,6 @@
 # Implementation Report
 
-Date: 2026-08-08
+Date: 2026-08-09
 
 ## Executive summary
 
@@ -24,8 +24,8 @@ Implemented in `src/lib/auth.ts`:
 - Added `BOT_ADMIN_TOKEN` for dashboard and administrative access.
 - Added `BOT_INGEST_TOKENS` for project-scoped ingestion credentials.
 - Added support for a single `BOT_INGEST_TOKEN` with `BOT_INGEST_PROJECT`.
-- Kept `BOT_LOG_TOKEN` as a temporary backwards-compatible fallback.
-- Restricted the legacy fallback so it is used only when no new ingestion mapping or single-project ingestion configuration exists.
+- Kept `BOT_LOG_TOKEN` as a temporary backwards-compatible fallback, gated by the explicit `BOT_ACCEPT_LEGACY_INGEST=true` migration flag.
+- Restricted the legacy fallback so it is used only during that explicit migration window and only when no new ingestion mapping or single-project ingestion configuration exists.
 - Added ingestion authentication and configuration helpers.
 - Kept `getBotLogToken()` as a compatibility alias for existing callers.
 - Updated session-creation errors to refer to `BOT_ADMIN_TOKEN`.
@@ -110,7 +110,7 @@ Implemented in `src/lib/bots.ts`:
 - Added the exported `isLikelyBotUserAgent()` prefilter.
 - It uses the existing bot pattern collection plus command-line and generic crawler indicators.
 
-The central smoke tests now verify that synthetic user agents matching every configured `PATTERNS` entry pass the prefilter without relying on a generic `/bot` suffix, while ordinary browser user agents do not. The same broad prefilter source is copied into each tracked integration for static framework matcher configuration; exact classification remains centralized. Added `scripts/verify-bot-prefilter-sync.mjs` and `npm run verify:prefilter` to detect drift across the six committed copies (central helper, three site helpers, and two Next.js inline matcher literals).
+The central smoke tests now verify that synthetic user agents matching every configured `PATTERNS` entry pass the prefilter without relying on a generic `/bot` suffix, while ordinary browser user agents do not. The same broad prefilter source is copied into each tracked integration for static framework matcher configuration; exact classification remains centralized. Added `scripts/verify-bot-prefilter-sync.mjs` and `npm run verify:prefilter` to detect drift across the six synchronized copies (central helper, three site helpers, and two Next.js inline matcher literals).
 
 ### 7. Retention tooling
 
@@ -120,12 +120,19 @@ The retention job:
 
 - Defaults to a 90-day raw-event retention period.
 - Allows the period to be changed through `RAW_EVENT_RETENTION_DAYS`.
+- Deletes in ordered batches controlled by `RAW_EVENT_RETENTION_BATCH_SIZE`, avoiding one unbounded `DELETE ... RETURNING` operation.
 - Deletes old rows from `bot_hits` only.
 - Leaves daily rollups and project health data intact.
 
 This is intentionally a runnable job rather than an automatically scheduled external task; deployment scheduling still needs to be configured.
 
-### 8. Tracked-site proxy changes
+### 8. Rollup reconciliation and idempotency
+
+`scripts/reconcile-rollups.mjs` now rebuilds only the retained raw-event date window instead of deleting every daily rollup. This preserves historical aggregates after raw-event retention has removed the source rows. The weighted rollup migration and live upsert both use conflict updates so rerunning reconciliation is idempotent.
+
+The integration fixture now includes a historical rollup outside the current raw-event window and verifies that it survives reconciliation.
+
+### 9. Tracked-site proxy changes
 
 #### `digital-employee-smb`
 
@@ -168,7 +175,21 @@ The Astro middleware had a separate direct reporting path with a legacy `BOT_LOG
 - Preserves explicit `/performance` middleware coverage and excludes ordinary non-bot page requests, assets, framework internals, metadata, and prefetches from bot-reporting middleware invocation.
 - Documents the required environment variables and behavior in `garaxe/README.md`.
 
-### 9. Documentation and configuration
+Additional Garaxe fixes completed during final validation:
+
+- Converted the Vercel configuration to a low-level `routes` table so User-Agent `has`/`missing` conditions can be applied without invalid generic middleware matcher syntax.
+- Preserved `/performance` noindex behavior, all existing agent rewrites, and the bot-only middleware route.
+- Added middleware tests for human requests, bot scheduling, performance headers, and collector failure isolation.
+- Restored the missing content modules required by the existing agent endpoint tests.
+- Migrated the single prose blog entry to Markdown and moved its collection configuration to Astro's legacy-compatible location, then typed the dynamic blog page props.
+- Added the missing Astro check and TypeScript development dependencies.
+- Fixed Markdown slug normalization and escaped comparison operators in the performance page.
+
+### 10. Build reproducibility
+
+The central dashboard no longer depends on a network request to Google Fonts during `next build`. The unavailable `next/font/google` imports were replaced with system font fallbacks, so production builds remain reproducible in offline CI and restricted build environments.
+
+### 11. Documentation and configuration
 
 Updated documentation and examples in the central service:
 
@@ -226,22 +247,22 @@ Applying a sampling rate at ingestion is insufficient if dashboard queries conti
 
 ### Central service
 
-- `npm test -- --reporter=dot`: 254 tests passed, 14 skipped; 14 test files passed and 4 were skipped.
+- `npm test -- --reporter=dot`: 257 tests passed, 14 skipped; 14 test files passed and 4 were skipped.
 - `npm run lint`: passed.
-- `npx tsc --noEmit`: passed.
-- `npm run build`: passed.
+- `node --check` passed for the modified reconciliation, retention, and prefilter scripts.
+- `npm run build`: passed after removing the network-dependent Google Font build step.
 - `git diff --check`: passed.
 - `npm run verify:prefilter`: passed across all six matcher copies.
 - `npm run test:integration`: test files loaded successfully, but all 14 integration tests were skipped because `TEST_DATABASE_URL` was not configured.
 
 The expected storage-failure log emitted by the mocked route test appeared on stderr; the test itself passed.
 
-The bot-pattern smoke suite specifically passed all 135 pattern fixtures after removing a fixture loophole that could have matched only the generic word `bot`.
+The bot-pattern smoke suite specifically passed all 134 pattern fixtures after removing a fixture loophole that could have matched only the generic word `bot`.
 
 ### `digital-employee-smb`
 
 - `npm run lint`: passed, with five pre-existing warnings in unrelated audit scripts.
-- `npm test`: 60 tests passed.
+- `npm test`: 64 tests passed, including the proxy matcher tests.
 - `npm run build`: passed.
 - `git diff --check`: passed.
 
@@ -250,7 +271,7 @@ The first build attempt was blocked by the sandbox when Next.js attempted to wri
 ### `vesivanov.com`
 
 - Lint passed.
-- `npm test`: 16 tests passed.
+- `npm test`: 20 tests passed, including the proxy matcher tests.
 - `npm run build`: passed.
 - `git diff --check`: passed.
 
@@ -259,10 +280,12 @@ The first build attempt encountered the same sandbox restriction on `.next/trace
 ### `garaxe`
 
 - `git diff --check`: passed.
-- The middleware changes were reviewed directly.
-- The repository's existing `npm run test:run` is blocked by a missing pre-existing import (`content/publicPages.js`), before any tests execute.
-- The repository's existing `npm run build:vite` is blocked by its pre-existing missing `/src/main.jsx` entry.
-- `npm run build` was not completed because Astro prompted to install a missing `@astrojs/check` dependency; no dependency was installed as part of this work.
+- `npm run test:run`: 8 tests passed across middleware and agent endpoint suites.
+- `npm run build`: passed with Astro type checking; it reports only existing non-blocking hints.
+- `npm run blog:check`: passed with four existing content-quality warnings and no errors.
+- `npm run verify:build`: passed.
+- `vercel build --prod --yes`: passed, validating the generated Vercel routing configuration.
+- The missing `content/publicPages.js` and `content/blogPosts.js` runtime modules were restored because the current agent endpoint imports required them.
 
 ## Files of particular interest
 
@@ -306,7 +329,7 @@ The implementation is complete in code, but deployment configuration and product
 8. Remove the `BOT_LOG_TOKEN` compatibility fallback after all clients have migrated.
 9. Run the integration suite with a real disposable test database by setting `TEST_DATABASE_URL`.
 
-No production deployments were performed. After the final review, the audited changes were committed in each repository; the final push references are included in the handoff for this task.
+No production deployments, commits, or pushes were performed in this implementation pass. The worktrees remain uncommitted for final user review.
 
 ## Scope and preservation notes
 

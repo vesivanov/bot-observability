@@ -20,4 +20,8 @@ SELECT
   COALESCE(ROUND(SUM(1.0 / NULLIF(sample_rate, 0)) FILTER (WHERE confidence = 'verified')), 0)
 FROM bot_hits
 WHERE heartbeat = FALSE
-GROUP BY 1, 2, 3, 4, 5;
+GROUP BY 1, 2, 3, 4, 5
+ON CONFLICT (day, project_name, bot_name, bot_category, status_class)
+DO UPDATE SET
+  hits = EXCLUDED.hits,
+  verified_hits = EXCLUDED.verified_hits;

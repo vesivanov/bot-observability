@@ -39,6 +39,7 @@ describe("POST /api/bot-hit", () => {
       BOT_IP_HASH_SECRET: "h".repeat(32),
       BOT_INGEST_TOKENS: JSON.stringify({ "tracked-site": ingestToken }),
       BOT_LOG_TOKEN: "",
+      BOT_ACCEPT_LEGACY_INGEST: "false",
     };
     mocks.insertHit.mockReset();
     mocks.upsertProjectHeartbeat.mockReset();
@@ -59,6 +60,15 @@ describe("POST /api/bot-hit", () => {
   it("fails closed when server configuration is weak", async () => {
     process.env.BOT_IP_HASH_SECRET = "short";
     expect((await POST(makeRequest({ user_agent: "GPTBot/1.0" }, { authorization: `Bearer ${ingestToken}` }))).status).toBe(503);
+  });
+
+  it("fails closed when required server configuration is missing", async () => {
+    delete process.env.DATABASE_URL;
+    expect((await POST(makeRequest({ user_agent: "GPTBot/1.0" }, { authorization: `Bearer ${ingestToken}` }))).status).toBe(503);
+
+    process.env.DATABASE_URL = "postgres://example";
+    delete process.env.BOT_INGEST_TOKENS;
+    expect((await POST(makeRequest({ user_agent: "GPTBot/1.0" }))).status).toBe(503);
   });
 
   it("rejects malformed and oversized bodies", async () => {
@@ -116,6 +126,26 @@ describe("POST /api/bot-hit", () => {
     expect(mocks.insertHit.mock.calls[0][0].ip).not.toContain("203.0.113.10");
   });
 
+  it("truncates oversized fields and clamps status codes", async () => {
+    const response = await POST(makeRequest({
+      user_agent: `GPTBot/1.0${"x".repeat(2500)}`,
+      path: `/${"p".repeat(1200)}`,
+      referer: "r".repeat(2500),
+      environment: "e".repeat(200),
+      deployment_url: "d".repeat(400),
+      status_code: 1000,
+    }, { authorization: `Bearer ${ingestToken}` }));
+
+    expect(response.status).toBe(201);
+    const stored = mocks.insertHit.mock.calls[0][0];
+    expect(stored.user_agent).toHaveLength(2000);
+    expect(stored.path).toHaveLength(1000);
+    expect(stored.referer).toHaveLength(2000);
+    expect(stored.environment).toHaveLength(100);
+    expect(stored.deployment_url).toHaveLength(300);
+    expect(stored.status_code).toBe(999);
+  });
+
   it("upserts heartbeats without creating raw bot rows", async () => {
     const response = await POST(makeRequest({
       project: "attacker-project",
@@ -131,6 +161,15 @@ describe("POST /api/bot-hit", () => {
       deployment_url: "",
     });
     expect(mocks.insertHit).not.toHaveBeenCalled();
+  });
+
+  it("returns a non-success response when heartbeat storage fails", async () => {
+    mocks.upsertProjectHeartbeat.mockRejectedValueOnce(new Error("database down"));
+    const response = await POST(makeRequest({ heartbeat: true }, {
+      authorization: `Bearer ${ingestToken}`,
+    }));
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "storage_failed" });
   });
 
   it("returns a non-success response when storage fails", async () => {

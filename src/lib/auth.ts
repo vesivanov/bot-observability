@@ -114,16 +114,24 @@ function parseMappedCredentials(raw: string): IngestionCredential[] | null {
  * BOT_INGEST_TOKENS is a JSON object mapping project names to keys. A single
  * BOT_INGEST_TOKEN plus BOT_INGEST_PROJECT is also supported.
  *
- * The BOT_LOG_TOKEN fallback is only used when no new ingestion mapping
- * exists, giving existing senders a migration path. Once a mapping is
- * configured, project identity always comes from that mapping.
+ * BOT_LOG_TOKEN can be accepted alongside new credentials during a deliberate
+ * migration window. Set BOT_ACCEPT_LEGACY_INGEST=true for that window, then
+ * disable it before removing the legacy secret. New credentials always derive
+ * project identity from their mapping; the legacy credential remains the only
+ * path that may use a submitted project name.
  */
 export function getIngestionConfig(): IngestionConfig {
+  const acceptLegacy = process.env.BOT_ACCEPT_LEGACY_INGEST === "true";
+  const legacyToken = process.env.BOT_LOG_TOKEN ?? "";
+
   const mapped = process.env.BOT_INGEST_TOKENS?.trim();
   if (mapped) {
     const credentials = parseMappedCredentials(mapped);
     if (!credentials || credentials.length === 0 || credentials.some((credential) => !isStrongSecret(credential.token))) {
       return { credentials: [], configured: true, invalid: true };
+    }
+    if (acceptLegacy && isStrongSecret(legacyToken)) {
+      credentials.push({ token: legacyToken, projectName: null, legacy: true });
     }
     return { credentials, configured: true, invalid: false };
   }
@@ -134,15 +142,18 @@ export function getIngestionConfig(): IngestionConfig {
     if (!singleProject || !isStrongSecret(singleToken)) {
       return { credentials: [], configured: true, invalid: true };
     }
+    const credentials: IngestionCredential[] = [{ token: singleToken, projectName: singleProject, legacy: false }];
+    if (acceptLegacy && isStrongSecret(legacyToken)) {
+      credentials.push({ token: legacyToken, projectName: null, legacy: true });
+    }
     return {
-      credentials: [{ token: singleToken, projectName: singleProject, legacy: false }],
+      credentials,
       configured: true,
       invalid: false,
     };
   }
 
-  const legacyToken = process.env.BOT_LOG_TOKEN ?? "";
-  if (isStrongSecret(legacyToken)) {
+  if (acceptLegacy && isStrongSecret(legacyToken)) {
     return {
       credentials: [{ token: legacyToken, projectName: null, legacy: true }],
       configured: true,
@@ -150,7 +161,11 @@ export function getIngestionConfig(): IngestionConfig {
     };
   }
 
-  return { credentials: [], configured: false, invalid: false };
+  return {
+    credentials: [],
+    configured: Boolean(legacyToken),
+    invalid: acceptLegacy && Boolean(legacyToken),
+  };
 }
 
 function bearerToken(header: string | null): string {
