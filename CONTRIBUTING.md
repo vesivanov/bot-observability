@@ -4,7 +4,7 @@
 
 ```bash
 npm install
-cp .env.example .env   # fill in DATABASE_URL and BOT_LOG_TOKEN
+cp .env.example .env   # fill in DATABASE_URL and the role-specific secrets
 npm run migrate        # apply db/migrations/*.sql to your database
 npm run dev            # http://localhost:3000
 ```

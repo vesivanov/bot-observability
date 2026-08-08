@@ -50,9 +50,11 @@ cp .env.example .env
 | Variable | Required | Description |
 |---|---|---|
 | `DATABASE_URL` | Yes | PostgreSQL connection string |
-| `BOT_LOG_TOKEN` | Yes | Shared server-side secret for dashboard login, signed sessions, ingestion auth, and keyed IP hashing; use 32+ random characters |
+| `BOT_ADMIN_TOKEN` | Yes | Dashboard login and session-signing secret; use a unique 32+ character value |
+| `BOT_IP_HASH_SECRET` | Yes | Dedicated 32+ character secret for keyed IP hashes; do not reuse another role's secret |
+| `BOT_INGEST_TOKENS` | Yes | JSON object mapping project names to unique 32+ character ingestion keys |
 
-Generate the token with `openssl rand -base64 32` or an equivalent cryptographically secure generator.
+Generate each secret with `openssl rand -base64 32` or an equivalent cryptographically secure generator. During migration, the legacy `BOT_LOG_TOKEN` is accepted only when no new ingestion mapping is configured.
 
 ### Database Setup
 
@@ -64,7 +66,7 @@ npm run migrate
 node scripts/migrate.mjs "$DATABASE_URL"
 ```
 
-The `bot_hits_daily` and `bot_first_seen` tables are seeded from existing history by the migration and then kept current by `insertHit` on every event. If you apply the migration to a database that keeps receiving traffic through an older (pre-rollup) build — e.g. between running the migration and deploying this version — those rows land in `bot_hits` but not the rollup. After deploying, run the reconcile script once to rebuild the rollup from raw and restore exact parity (safe to re-run any time you suspect drift):
+The `bot_hits_daily` and `bot_first_seen` tables are seeded from existing history by the migration and then kept current by `insertHit` on every event. Migration `004_weighted_rollups.sql` repairs the daily rollup for existing deployments where sampled rows were previously backfilled with unweighted counts. If you apply migrations while an older (pre-rollup) build is still receiving traffic, those rows land in `bot_hits` but not the rollup; after deploying, run the reconcile script once to rebuild the rollup from raw and restore exact parity (safe to re-run any time you suspect drift):
 
 ```bash
 npm run reconcile-rollups
@@ -87,12 +89,12 @@ For Vercel:
 
 1. Create a PostgreSQL database (Aiven, Neon, or any provider).
 2. Run `npm run migrate` (or `node scripts/migrate.mjs "$DATABASE_URL"`).
-3. Generate a long random `BOT_LOG_TOKEN`.
-4. Add `DATABASE_URL` and `BOT_LOG_TOKEN` as environment variables.
+3. Generate separate admin, IP-hash, and per-project ingestion secrets.
+4. Add `DATABASE_URL`, `BOT_ADMIN_TOKEN`, `BOT_IP_HASH_SECRET`, and `BOT_INGEST_TOKENS` as environment variables.
 5. Deploy the repository.
-6. Open `/dashboard` and sign in with `BOT_LOG_TOKEN`.
+6. Open `/dashboard` and sign in with `BOT_ADMIN_TOKEN`.
 
-Do not expose `BOT_LOG_TOKEN` in client-side browser code. Tracked sites should send events from middleware, server routes, edge/server functions, or backend logging code.
+Do not expose any of these secrets in client-side browser code. Tracked sites should send events from a server-only proxy, route, function, or backend logger.
 
 ## Routes
 
@@ -114,13 +116,13 @@ Every view also accepts `?period=`, either a preset (`1`, `7`, `30`, `90`, `365`
 
 ## Ingesting Bot Hits
 
-Tracked sites should `POST` JSON to the dashboard's `/api/bot-hit` endpoint with either a bearer token or `x-bot-log-token` header. Bot identity, category, and confidence are derived server-side from the submitted user agent and IP.
+Tracked sites should `POST` JSON to the collector's `/api/bot-hit` endpoint with a project-scoped bearer token or `x-bot-log-token` header. Bot identity, category, and confidence are derived server-side from the submitted user agent and IP. The collector derives the project from the credential; a new credential cannot submit for another project.
 
 Send `status_code` when it is available. Status reports show older or incomplete events as `not captured`; that is not a real HTTP status class.
 
 ```bash
 curl -X POST "$DASHBOARD_URL/api/bot-hit" \
-  -H "Authorization: Bearer $BOT_LOG_TOKEN" \
+  -H "Authorization: Bearer $BOT_INGEST_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "project": "marketing-site",
@@ -135,45 +137,60 @@ curl -X POST "$DASHBOARD_URL/api/bot-hit" \
   }'
 ```
 
-Minimal tracked-site example:
+Minimal non-blocking Next.js Proxy example:
 
 ```ts
-const response = await fetch(request);
+import { NextResponse, type NextFetchEvent, type NextRequest } from "next/server";
+import { isLikelyBotUserAgent } from "@/lib/bots";
 
-await fetch(`${process.env.BOT_DASHBOARD_URL}/api/bot-hit`, {
-  method: "POST",
-  headers: {
-    "content-type": "application/json",
-    authorization: `Bearer ${process.env.BOT_LOG_TOKEN}`,
-  },
-  body: JSON.stringify({
-    project: "marketing-site",
-    url: request.url,
-    method: request.method,
-    status_code: response.status,
-    user_agent: request.headers.get("user-agent") ?? "",
-    ip: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "",
-    referer: request.headers.get("referer") ?? "",
-  }),
-});
+function reportBotHit(request: NextRequest) {
+  return fetch(`${process.env.BOT_OBSERVABILITY_URL}/api/bot-hit`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${process.env.BOT_INGEST_TOKEN}`,
+    },
+    body: JSON.stringify({
+      url: request.url,
+      method: request.method,
+      status_code: 0,
+      user_agent: request.headers.get("user-agent") ?? "",
+      ip: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "",
+      referer: request.headers.get("referer") ?? "",
+    }),
+  }).then((response) => {
+    if (!response.ok) console.error(`[bot-observability] ingestion failed: ${response.status}`);
+  });
+}
 
-return response;
+export function proxy(request: NextRequest, event: NextFetchEvent) {
+  const response = NextResponse.next();
+  const userAgent = request.headers.get("user-agent") ?? "";
+  if (isLikelyBotUserAgent(userAgent)) {
+    event.waitUntil(reportBotHit(request).catch(() => undefined));
+  }
+  return response;
+}
 ```
+
+Preserve each site's existing redirects, rewrites, locale handling, security headers, and content negotiation around this sender. The collector derives the project from the token, and `status_code: 0` means that a pass-through Proxy does not claim to know the final downstream status.
 
 Heartbeat events can be sent periodically to monitor pipeline freshness:
 
 ```bash
 curl -X POST "$DASHBOARD_URL/api/bot-hit" \
-  -H "Authorization: Bearer $BOT_LOG_TOKEN" \
+  -H "Authorization: Bearer $BOT_INGEST_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"project":"marketing-site","heartbeat":true}'
+  -d '{"heartbeat":true,"environment":"production"}'
 ```
+
+Heartbeats update one row in `project_health` per project. They are idempotent and do not append rows to `bot_hits`.
 
 ### Payload Fields
 
 | Field | Required | Notes |
 |---|---:|---|
-| `project` or `project_name` | No | Defaults to `default`; use it to separate sites or apps |
+| `project` or `project_name` | Legacy only | New project-scoped credentials derive this value from the credential; legacy senders default to `default` |
 | `url` | No | Used to derive `host`, `path`, and `query_string` when those are not provided |
 | `path` | No | Useful when you do not want to send full URLs |
 | `method` | No | Defaults to `GET` |
@@ -183,7 +200,7 @@ curl -X POST "$DASHBOARD_URL/api/bot-hit" \
 | `referer` | No | Stored for raw event inspection |
 | `environment` | No | Defaults to `production` |
 | `is_api_route` | No | Helps the Status tab surface API hits |
-| `sample_rate` | No | Stored but not currently used in aggregation |
+| `sample_rate` | No | Allowed values are `1`, `0.5`, `0.25`, and `0.1`; rollups weight each row by the exact integer reciprocal |
 | `heartbeat` | No | Set true for pipeline health events |
 
 ### Limits
@@ -199,22 +216,22 @@ The ingestion endpoint enforces a few hardcoded limits (see `src/app/api/bot-hit
   | `201` | Event stored (`{ stored: true, bot_name, bot_category, confidence }`) |
   | `200` | Not stored — non-bot, non-heartbeat traffic (`{ stored: false, reason: "not_bot" }`) |
   | `400` | Invalid or too-large JSON payload |
-  | `401` | Missing/invalid `BOT_LOG_TOKEN` |
+  | `401` | Missing/invalid ingestion credential |
   | `429` | Rate limit exceeded |
-  | `503` | Ingestion not configured (`DATABASE_URL` missing or `BOT_LOG_TOKEN` shorter than 32 characters) |
+  | `503` | Ingestion not configured (`DATABASE_URL`, `BOT_IP_HASH_SECRET`, or ingestion credentials missing/weak) |
 
 ## Privacy and Security
 
-- The dashboard is protected by `BOT_LOG_TOKEN`, not a full user-management system. A successful login creates a signed, HTTP-only, same-site session cookie valid for 1 year; the token itself is never stored in the cookie.
-- Ingestion uses the same `BOT_LOG_TOKEN`; keep it server-side.
-- Submitted IP addresses are used for bot verification and then stored only as domain-separated, keyed HMAC-SHA-256 values derived from `BOT_LOG_TOKEN`. Raw IP storage is not supported.
-- Rotating `BOT_LOG_TOKEN` changes the keyed hash produced for future observations of the same IP. Existing stored hashes remain unchanged.
+- The dashboard is protected by `BOT_ADMIN_TOKEN`, not a full user-management system. A successful login creates a signed, HTTP-only, same-site session cookie valid for 1 year; the token itself is never stored in the cookie.
+- Ingestion uses project-scoped `BOT_INGEST_TOKENS`; keep them server-side and never place them in `NEXT_PUBLIC_*` variables.
+- Submitted IP addresses are used for bot verification and then stored only as domain-separated, keyed HMAC-SHA-256 values derived from `BOT_IP_HASH_SECRET`. Raw IP storage is not supported.
+- Rotating `BOT_IP_HASH_SECRET` changes the keyed hash produced for future observations of the same IP. Existing stored hashes remain unchanged.
 - User agents, paths, referrers, approximate geo fields, deployment URLs, and status codes may be stored.
-- Rotate `DATABASE_URL` and `BOT_LOG_TOKEN` before making a previously private deployment public if either may have been exposed outside trusted systems.
+- Rotate `DATABASE_URL` and every role-specific secret before making a previously private deployment public if any may have been exposed outside trusted systems.
 
 ## Architecture
 
-- **Storage**: a single `bot_hits` raw event table, plus two maintained tables — `bot_hits_daily` (a `(day, project, bot, category, status_class)` rollup used for long-range and high-volume views) and `bot_first_seen` (per-bot first/last-seen timestamps, used for exact "new bot" detection). Both are kept in sync with the raw insert inside the same transaction (`insertHit` in `src/lib/db.ts`) — no separate backfill job, no drift for new rows. If rows are ever ingested by an older build that predates the rollup, `npm run reconcile-rollups` rebuilds both tables from raw (see Database Setup). Day buckets are UTC (`DATE(created_at)`); the UI displays timestamps in Europe/Berlin.
+- **Storage**: a single `bot_hits` raw event table, two maintained tables — `bot_hits_daily` (a `(day, project, bot, category, status_class)` rollup used for long-range and high-volume views) and `bot_first_seen` (per-bot first/last-seen timestamps) — plus idempotent `project_health` heartbeat state. Bot events update the raw row and rollups in one transaction; heartbeats update only `project_health`. If rows are ever ingested by an older build that predates the rollup, `npm run reconcile-rollups` rebuilds both tables from raw (see Database Setup). Day buckets are UTC (`DATE(created_at)`); the UI displays timestamps in Europe/Berlin.
 - **Request-scoped DB client**: each request gets its own `postgres` client via `cache()` + `after()` (see `src/lib/db.ts` / `src/app/dashboard/page.tsx`), closed at the end of the request rather than pooled indefinitely — deliberate for small free-tier Postgres connection limits (e.g. Aiven).
 - **Rendering**: the dashboard streams server-rendered content with a `Suspense` boundary per view/panel, so slow queries don't block the whole page.
 - **Rate limiting is per-instance, not global**: `/api/bot-hit`'s rate limiter is an in-memory `Map` scoped to a single running process (see `src/app/api/bot-hit/route.ts`). On multi-instance serverless platforms like Vercel, each concurrently-running instance enforces its own 120 req/min ceiling independently — there is no shared/global counter. Real aggregate throughput across all instances can therefore be significantly higher than 120 req/min. Do not rely on this limiter as a hard global cap; put a WAF/edge rate limit in front of it if you need one.
@@ -226,9 +243,14 @@ The ingestion endpoint enforces a few hardcoded limits (see `src/app/api/bot-hit
 
 ## Retention
 
-Raw events are kept indefinitely by design — `bot_hits_daily` and `bot_first_seen` exist to make long-range and high-volume queries fast, not to replace the raw table, so there's no built-in retention/deletion job.
+Raw events can be retained for a bounded period while daily rollups, first/last-seen data, and project health remain available. The optional cleanup command defaults to 90 days:
 
-If you're self-hosting and want to prune old raw rows anyway, this is safe to run periodically — it only touches `bot_hits` and won't desync the rollup tables (they're independent, already-aggregated data):
+```bash
+npm run retain-raw
+# or: node scripts/retain-raw-events.mjs "$DATABASE_URL" 90
+```
+
+Schedule it daily or weekly. It only deletes old rows from `bot_hits`; it does not delete or rebuild rollups, first/last-seen records, or `project_health`:
 
 ```sql
 DELETE FROM bot_hits

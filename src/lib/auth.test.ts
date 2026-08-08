@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   checkLoginRateLimit,
+  authenticateIngestion,
   createSessionValue,
+  getAdminToken,
   getBotLogToken,
+  getIngestionConfig,
   isSessionValid,
   isStrongSecret,
   isTokenValid,
@@ -22,8 +25,35 @@ afterEach(() => {
 
 describe("auth configuration", () => {
   it("reads the shared server-side token", () => {
+    delete process.env.BOT_ADMIN_TOKEN;
     process.env.BOT_LOG_TOKEN = "t".repeat(32);
     expect(getBotLogToken()).toBe("t".repeat(32));
+  });
+
+  it("keeps admin and per-project ingestion credentials separate", () => {
+    const admin = "a".repeat(32);
+    const ingest = "i".repeat(32);
+    process.env.BOT_ADMIN_TOKEN = admin;
+    process.env.BOT_INGEST_TOKENS = JSON.stringify({ "tracked-site": ingest });
+
+    expect(getAdminToken()).toBe(admin);
+    expect(authenticateIngestion(new Request("https://example.com", {
+      headers: { authorization: `Bearer ${ingest}` },
+    }))).toEqual({ projectName: "tracked-site", legacy: false });
+    expect(authenticateIngestion(new Request("https://example.com", {
+      headers: { authorization: `Bearer ${admin}` },
+    }))).toBeNull();
+  });
+
+  it("marks malformed or weak ingestion mappings as invalid", () => {
+    process.env.BOT_INGEST_TOKENS = "not-json";
+    expect(getIngestionConfig()).toMatchObject({ configured: true, invalid: true });
+
+    process.env.BOT_INGEST_TOKENS = JSON.stringify({ "tracked-site": "short" });
+    expect(getIngestionConfig()).toMatchObject({ configured: true, invalid: true });
+
+    process.env.BOT_INGEST_TOKENS = JSON.stringify({});
+    expect(getIngestionConfig()).toMatchObject({ configured: true, invalid: true });
   });
 });
 

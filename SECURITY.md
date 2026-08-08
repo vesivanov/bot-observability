@@ -23,9 +23,10 @@ Include:
 
 ## Deployment Notes
 
-- Treat `DATABASE_URL` and `BOT_LOG_TOKEN` as secrets.
-- Use a random `BOT_LOG_TOKEN` of at least 32 characters. Generate it with `openssl rand -base64 32` or an equivalent cryptographically secure generator.
+- Treat `DATABASE_URL`, `BOT_ADMIN_TOKEN`, `BOT_IP_HASH_SECRET`, and every project ingestion key as secrets.
+- Use unique random values of at least 32 characters for each role. Generate them with `openssl rand -base64 32` or an equivalent cryptographically secure generator.
 - Rotate secrets before making a previously private deployment public.
-- Submitted IP addresses are verified in memory and then stored only as keyed HMAC-SHA-256 values derived from `BOT_LOG_TOKEN`; raw IP storage is not supported.
+- Submitted IP addresses are verified in memory and then stored only as keyed HMAC-SHA-256 values derived from `BOT_IP_HASH_SECRET`; raw IP storage is not supported.
 - The dashboard uses a signed, HTTP-only 1-year session cookie, not multi-user authentication.
-- The same `BOT_LOG_TOKEN` authenticates dashboard login and ingestion. Keep it server-side and do not expose it in browser code.
+- `BOT_ADMIN_TOKEN` authenticates dashboard login, while `BOT_INGEST_TOKENS` contains project-scoped ingestion keys. Keep all of them server-side and do not expose them in browser code.
+- `BOT_LOG_TOKEN` is a temporary migration fallback only; remove it after all senders use project-scoped ingestion keys and the dashboard uses `BOT_ADMIN_TOKEN`.

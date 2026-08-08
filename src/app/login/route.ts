@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import {
   checkLoginRateLimit,
   createSessionValue,
-  getBotLogToken,
+  getAdminToken,
   isStrongSecret,
   isTokenValid,
   LEGACY_COOKIE_NAME,
@@ -11,8 +11,8 @@ import {
 } from "@/lib/auth";
 
 export async function POST(request: Request) {
-  const botLogToken = getBotLogToken();
-  if (!isStrongSecret(botLogToken)) {
+  const adminToken = getAdminToken();
+  if (!isStrongSecret(adminToken)) {
     return NextResponse.redirect(new URL("/dashboard?error=not_configured", request.url), 303);
   }
 
@@ -23,12 +23,12 @@ export async function POST(request: Request) {
   const formData = await request.formData();
   const token = formData.get("token");
 
-  if (typeof token !== "string" || !isTokenValid(token, botLogToken)) {
+  if (typeof token !== "string" || !isTokenValid(token, adminToken)) {
     return NextResponse.redirect(new URL("/dashboard?error=invalid", request.url), 303);
   }
 
   const response = NextResponse.redirect(new URL("/dashboard", request.url), 303);
-  response.cookies.set(SESSION_COOKIE_NAME, createSessionValue(botLogToken), {
+  response.cookies.set(SESSION_COOKIE_NAME, createSessionValue(adminToken), {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "strict",

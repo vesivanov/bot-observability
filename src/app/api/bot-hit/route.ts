@@ -3,12 +3,18 @@ import { detectBot } from "@/lib/bots";
 import { createDbClient } from "@/lib/db";
 import type { BotHit } from "@/lib/schema";
 import { verifyBot } from "@/lib/verify";
-import { getBotLogToken, isStrongSecret, timingSafeCompare } from "@/lib/auth";
+import {
+  authenticateIngestion,
+  getIngestionConfig,
+  getIpHashSecret,
+  isStrongSecret,
+} from "@/lib/auth";
 import { storedIp } from "@/lib/ip-storage";
 
 export const runtime = "nodejs";
 
 const MAX_BODY_BYTES = 32 * 1024;
+export const ALLOWED_SAMPLE_RATES = [1, 0.5, 0.25, 0.1] as const;
 
 // Per-instance rate limiter — not globally consistent across Vercel instances,
 // but prevents burst abuse within a single instance.
@@ -36,24 +42,10 @@ function checkRateLimit(key: string): boolean {
 const MAX_STRING_LENGTH = 2000;
 const MAX_PATH_LENGTH = 1000;
 
-const DATABASE_URL = process.env.DATABASE_URL;
-
 type Payload = Record<string, unknown>;
 
 function jsonError(message: string, status: number) {
   return NextResponse.json({ error: message }, { status });
-}
-
-function bearerToken(header: string | null) {
-  if (!header) return "";
-  const [scheme, token] = header.split(" ");
-  return scheme?.toLowerCase() === "bearer" ? token ?? "" : "";
-}
-
-function isAuthed(request: Request, botLogToken: string) {
-  const headerToken = request.headers.get("x-bot-log-token") ?? "";
-  const authorizationToken = bearerToken(request.headers.get("authorization"));
-  return timingSafeCompare(headerToken, botLogToken) || timingSafeCompare(authorizationToken, botLogToken);
 }
 
 function text(value: unknown, fallback = "", maxLength = MAX_STRING_LENGTH) {
@@ -75,6 +67,12 @@ function statusCode(payload: Payload) {
   return Math.round(numberInRange(payload.status_code ?? payload.status, 0, 0, 999));
 }
 
+export function normalizeSampleRate(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return 1;
+  return ALLOWED_SAMPLE_RATES.find((rate) => rate === parsed) ?? 1;
+}
+
 function firstHeaderIp(request: Request) {
   const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   return forwarded || request.headers.get("x-real-ip") || "";
@@ -93,19 +91,30 @@ async function readPayload(request: Request): Promise<Payload | null> {
   const contentLength = Number(request.headers.get("content-length") ?? 0);
   if (contentLength > MAX_BODY_BYTES) return null;
   try {
-    const body = await request.json();
-    return body && typeof body === "object" && !Array.isArray(body) ? body as Payload : {};
+    const bodyBytes = await request.arrayBuffer();
+    if (bodyBytes.byteLength > MAX_BODY_BYTES) return null;
+    const body = JSON.parse(new TextDecoder().decode(bodyBytes)) as unknown;
+    return body && typeof body === "object" && !Array.isArray(body) ? body as Payload : null;
   } catch {
     return null;
   }
 }
 
 export async function POST(request: Request) {
-  const botLogToken = getBotLogToken();
-  if (!DATABASE_URL || !isStrongSecret(botLogToken)) {
+  const databaseUrl = process.env.DATABASE_URL;
+  const ipHashSecret = getIpHashSecret();
+  const ingestionConfig = getIngestionConfig();
+  if (
+    !databaseUrl ||
+    !isStrongSecret(ipHashSecret) ||
+    !ingestionConfig.configured ||
+    ingestionConfig.invalid
+  ) {
     return jsonError("Ingestion is not configured", 503);
   }
-  if (!isAuthed(request, botLogToken)) {
+
+  const identity = authenticateIngestion(request);
+  if (!identity) {
     return jsonError("Unauthorized", 401);
   }
 
@@ -123,22 +132,46 @@ export async function POST(request: Request) {
   }
 
   const heartbeat = bool(payload.heartbeat);
+  const submittedProject = text(payload.project_name || payload.project, "default", 200).trim() || "default";
+  // New credentials are scoped to one project. The submitted project is
+  // accepted only for the legacy migration path.
+  const projectName = identity.projectName ?? submittedProject;
   const userAgent = text(payload.user_agent, request.headers.get("user-agent") ?? "");
-  const match = detectBot(userAgent);
+  const match = heartbeat ? null : detectBot(userAgent);
 
   if (!match && !heartbeat) {
     return NextResponse.json({ stored: false, reason: "not_bot" });
   }
 
   const ip = text(payload.ip, firstHeaderIp(request), 128);
+
+  if (heartbeat) {
+    const client = createDbClient(databaseUrl);
+    try {
+      await client.upsertProjectHeartbeat({
+        project_name: projectName,
+        environment: text(payload.environment, "production", 100),
+        deployment_url: text(payload.deployment_url, "", 300),
+      });
+    } catch (error) {
+      console.error("[bot-hit] failed to store heartbeat", error);
+      return jsonError("storage_failed", 500);
+    } finally {
+      await client.close();
+    }
+
+    return NextResponse.json({ stored: true, heartbeat: true, project: projectName });
+  }
+
   const botName = heartbeat ? "Heartbeat" : match?.name ?? "Unknown";
   const botCategory = heartbeat ? "generic" : match?.category ?? "unknown";
-  const confidence = heartbeat || !ip ? "ua_only" : await verifyBot(botName, ip);
+  const hashedIp = storedIp(ip, ipHashSecret);
+  const confidence = !ip ? "ua_only" : await verifyBot(botName, ip, hashedIp);
   const url = text(payload.url);
   const parsedUrl = parseUrl(url);
 
   const hit: BotHit = {
-    project_name: text(payload.project_name || payload.project, "default", 200),
+    project_name: projectName,
     environment: text(payload.environment, "production", 100),
     host: text(payload.host, parsedUrl?.host ?? request.headers.get("host") ?? "", 300),
     path: text(payload.path, parsedUrl?.pathname ?? "/", MAX_PATH_LENGTH),
@@ -150,7 +183,7 @@ export async function POST(request: Request) {
     confidence,
     user_agent: userAgent,
     referer: text(payload.referer, "", MAX_STRING_LENGTH),
-    ip: storedIp(ip, botLogToken),
+    ip: hashedIp,
     country: text(payload.country, "", 100),
     region: text(payload.region, "", 100),
     city: text(payload.city, "", 100),
@@ -158,11 +191,11 @@ export async function POST(request: Request) {
     deployment_url: text(payload.deployment_url, "", 300),
     vercel_id: text(payload.vercel_id, "", 300),
     is_api_route: bool(payload.is_api_route),
-    sample_rate: numberInRange(payload.sample_rate, 1, 0.001, 1),
+    sample_rate: normalizeSampleRate(payload.sample_rate),
     heartbeat,
   };
 
-  const client = createDbClient(DATABASE_URL);
+  const client = createDbClient(databaseUrl);
   try {
     await client.insertHit(hit);
   } catch (error) {

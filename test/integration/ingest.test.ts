@@ -53,18 +53,20 @@ describe.skipIf(!url)("insertHit", () => {
     await raw`DELETE FROM bot_hits WHERE project_name = ${PROJECT}`;
     await raw`DELETE FROM bot_hits_daily WHERE project_name = ${PROJECT}`;
     await raw`DELETE FROM bot_first_seen WHERE bot_name = ${BOT}`;
+    await raw`DELETE FROM project_health WHERE project_name = ${PROJECT}`;
     await raw.end();
     await db.close();
   });
 
-  it("writes raw + rollup + first_seen consistently, and skips rollup/first_seen for heartbeats", async () => {
+  it("writes raw + rollup + first_seen consistently, and upserts heartbeats separately", async () => {
     await db.insertHit(baseHit({ status_code: 200, confidence: "verified" }));
     await db.insertHit(baseHit({ status_code: 200, confidence: "ua_only" }));
     await db.insertHit(baseHit({ status_code: 404, confidence: "ua_only" }));
     await db.insertHit(baseHit({ status_code: 500, confidence: "ua_only" }));
     await db.insertHit(baseHit({ heartbeat: true, status_code: 0 }));
+    await db.insertHit(baseHit({ heartbeat: true, status_code: 0 }));
 
-    // Raw rows: 4 real hits + 1 heartbeat.
+    // Raw rows contain only the 4 real hits; heartbeats use project_health.
     const rawHits = await raw`
       SELECT status_code, confidence, heartbeat FROM bot_hits
       WHERE project_name = ${PROJECT} AND heartbeat = FALSE
@@ -72,7 +74,7 @@ describe.skipIf(!url)("insertHit", () => {
     expect(rawHits).toHaveLength(4);
 
     const heartbeatRows = await raw`
-      SELECT * FROM bot_hits WHERE project_name = ${PROJECT} AND heartbeat = TRUE
+      SELECT * FROM project_health WHERE project_name = ${PROJECT}
     `;
     expect(heartbeatRows).toHaveLength(1);
 
@@ -100,13 +102,12 @@ describe.skipIf(!url)("insertHit", () => {
       SELECT MAX(created_at) AS max_real_created_at FROM bot_hits
       WHERE project_name = ${PROJECT} AND heartbeat = FALSE
     `;
-    const [{ heartbeat_created_at }] = await raw<{ heartbeat_created_at: Date }[]>`
-      SELECT created_at AS heartbeat_created_at FROM bot_hits
-      WHERE project_name = ${PROJECT} AND heartbeat = TRUE
+    const [{ last_heartbeat_at }] = await raw<{ last_heartbeat_at: Date }[]>`
+      SELECT last_heartbeat_at FROM project_health WHERE project_name = ${PROJECT}
     `;
 
     expect(new Date(firstSeenRow.last_seen).getTime()).toBe(new Date(max_real_created_at).getTime());
-    // The heartbeat was inserted after the 4 real hits but must not have
+    // The heartbeat was recorded after the 4 real hits but must not have
     // bumped last_seen past it. created_at has millisecond resolution, so a
     // fast enough run can legitimately land the heartbeat in the same
     // millisecond as the last real hit — toBeLessThanOrEqual avoids that
@@ -114,7 +115,7 @@ describe.skipIf(!url)("insertHit", () => {
     // max_real_created_at, which excludes the heartbeat by construction) is
     // what actually proves the heartbeat didn't bump last_seen; this is
     // belt-and-suspenders on top of it, not the primary guarantee.
-    expect(new Date(firstSeenRow.last_seen).getTime()).toBeLessThanOrEqual(new Date(heartbeat_created_at).getTime());
+    expect(new Date(firstSeenRow.last_seen).getTime()).toBeLessThanOrEqual(new Date(last_heartbeat_at).getTime());
   });
 
   it("weights sample_rate so a sampled row counts as ~1/sample_rate real hits", async () => {

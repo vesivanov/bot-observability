@@ -17,7 +17,7 @@ import { HealthViewServer } from "@/app/dashboard/views/health";
 import { EventsViewServer } from "@/app/dashboard/views/events";
 import { categoryMeta, CATEGORY_ORDER } from "@/lib/categories";
 import {
-  getBotLogToken,
+  getAdminToken,
   isSessionValid,
   isStrongSecret,
   SESSION_COOKIE_NAME,
@@ -67,10 +67,10 @@ export default async function DashboardPage({
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
   const sp = await searchParams;
-  const botLogToken = getBotLogToken();
+  const adminToken = getAdminToken();
   const session = (await cookies()).get(SESSION_COOKIE_NAME)?.value;
 
-  if (!isSessionValid(session ?? null, botLogToken)) {
+  if (!isSessionValid(session ?? null, adminToken)) {
     const error = sp.error as string;
     const errorMessage = error === "invalid" ? "Invalid token. Please try again."
       : error === "rate_limited" ? "Too many login attempts. Please wait a minute."
@@ -78,10 +78,10 @@ export default async function DashboardPage({
 
     return (
       <div className="max-w-md mx-auto mt-32 text-center">
-        {!isStrongSecret(botLogToken) ? (
+        {!isStrongSecret(adminToken) ? (
           <>
             <h2 className="text-xl font-semibold mb-4">Dashboard authentication is not configured</h2>
-            <p className="text-neutral-400 text-sm">Set BOT_LOG_TOKEN to a value of at least 32 characters.</p>
+            <p className="text-neutral-400 text-sm">Set BOT_ADMIN_TOKEN to a value of at least 32 characters.</p>
           </>
         ) : (
           <>

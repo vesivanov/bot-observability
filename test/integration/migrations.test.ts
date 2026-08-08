@@ -31,13 +31,13 @@ describe.skipIf(!url)("migrations", () => {
       const tables = await sql<{ table_name: string }[]>`
         SELECT table_name FROM information_schema.tables
         WHERE table_schema = 'public'
-          AND table_name IN ('bot_hits', 'bot_hits_daily', 'bot_first_seen', 'schema_migrations')
+          AND table_name IN ('bot_hits', 'bot_hits_daily', 'bot_first_seen', 'project_health', 'schema_migrations')
       `;
       const names = tables.map((t) => t.table_name).sort();
-      expect(names).toEqual(["bot_first_seen", "bot_hits", "bot_hits_daily", "schema_migrations"]);
+      expect(names).toEqual(["bot_first_seen", "bot_hits", "bot_hits_daily", "project_health", "schema_migrations"]);
 
       const appliedBefore = await sql`SELECT name FROM schema_migrations ORDER BY name`;
-      expect(appliedBefore.length).toBeGreaterThanOrEqual(2);
+      expect(appliedBefore.length).toBeGreaterThanOrEqual(4);
 
       // Second run should be a total no-op: same applied set, no errors.
       const secondOutput = runMigrate();
@@ -94,6 +94,10 @@ describe.skipIf(!url)("002_rollups.sql backfill", () => {
           ('${day1}', 'proj', 'AhrefsBot', 'seo_crawler', 500, 'ua_only', FALSE),
           ('${day1}', 'proj', 'GPTBot', 'ai_training', 200, 'verified', TRUE)
       `);
+      await sql.unsafe(`
+        INSERT INTO bot_hits (created_at, project_name, bot_name, bot_category, status_code, confidence, sample_rate, heartbeat)
+        VALUES ('${day2}', 'proj', 'GPTBot', 'ai_training', 200, 'verified', 0.5, FALSE)
+      `);
 
       const rollups = readFileSync(join(migrationsDir, "002_rollups.sql"), "utf8");
       await sql.unsafe(rollups);
@@ -105,7 +109,7 @@ describe.skipIf(!url)("002_rollups.sql backfill", () => {
         { day: "2026-01-01", bot_name: "AhrefsBot", status_class: "5xx", hits: 1, verified_hits: 0 },
         { day: "2026-01-01", bot_name: "GPTBot", status_class: "2xx", hits: 2, verified_hits: 1 },
         { day: "2026-01-01", bot_name: "GPTBot", status_class: "4xx", hits: 1, verified_hits: 0 },
-        { day: "2026-01-02", bot_name: "GPTBot", status_class: "2xx", hits: 1, verified_hits: 1 },
+        { day: "2026-01-02", bot_name: "GPTBot", status_class: "2xx", hits: 3, verified_hits: 2 },
       ]);
       // The heartbeat row's own hit must not appear anywhere — in particular
       // not folded into day1's GPTBot 2xx bucket (which would make hits: 3).
