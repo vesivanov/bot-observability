@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  authenticateIngestion,
   checkLoginRateLimit,
   createSessionValue,
   getAdminToken,

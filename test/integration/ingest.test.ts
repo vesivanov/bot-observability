@@ -115,7 +115,7 @@ describe.skipIf(!url)("insertHit", () => {
     // max_real_created_at, which excludes the heartbeat by construction) is
     // what actually proves the heartbeat didn't bump last_seen; this is
     // belt-and-suspenders on top of it, not the primary guarantee.
-    expect(new Date(firstSeenRow.last_seen).getTime()).toBeLessThanOrEqual(new Date(heartbeat_created_at).getTime());
+    expect(new Date(firstSeenRow.last_seen).getTime()).toBeLessThanOrEqual(new Date(last_heartbeat_at).getTime());
   });
 
   it("weights sample_rate so a sampled row counts as ~1/sample_rate real hits", async () => {
