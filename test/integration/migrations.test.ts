@@ -31,13 +31,13 @@ describe.skipIf(!url)("migrations", () => {
       const tables = await sql<{ table_name: string }[]>`
         SELECT table_name FROM information_schema.tables
         WHERE table_schema = 'public'
-          AND table_name IN ('bot_hits', 'bot_hits_daily', 'bot_first_seen', 'schema_migrations')
+          AND table_name IN ('bot_hits', 'bot_hits_daily', 'bot_first_seen', 'project_health', 'schema_migrations')
       `;
       const names = tables.map((t) => t.table_name).sort();
-      expect(names).toEqual(["bot_first_seen", "bot_hits", "bot_hits_daily", "schema_migrations"]);
+      expect(names).toEqual(["bot_first_seen", "bot_hits", "bot_hits_daily", "project_health", "schema_migrations"]);
 
       const appliedBefore = await sql`SELECT name FROM schema_migrations ORDER BY name`;
-      expect(appliedBefore.length).toBeGreaterThanOrEqual(2);
+      expect(appliedBefore.length).toBeGreaterThanOrEqual(4);
 
       // Second run should be a total no-op: same applied set, no errors.
       const secondOutput = runMigrate();

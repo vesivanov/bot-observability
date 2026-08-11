@@ -74,7 +74,7 @@ describe.skipIf(!url)("reconcile-rollups.mjs", () => {
       `);
 
       const { stdout } = await execFileAsync("node", [reconcileScript, withSearchPath(url as string, schema)]);
-      expect(stdout).toContain("reconciled: rollup matches raw");
+      expect(stdout).toContain("reconciled: retained rollup window matches raw");
 
       const daily = await scoped<{ day: string; bot_name: string; status_class: string; hits: number; verified_hits: number }[]>`
         SELECT day::text, bot_name, status_class, hits, verified_hits FROM bot_hits_daily ORDER BY day, bot_name, status_class

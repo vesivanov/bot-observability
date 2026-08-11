@@ -1,7 +1,9 @@
 import postgres from "postgres";
 
-// Rebuilds the bot_hits_daily rollup and reconciles bot_first_seen from the
-// raw bot_hits table. Safe to run any time and as often as you like.
+// Rebuilds the retained bot_hits_daily window and reconciles bot_first_seen
+// from the raw bot_hits table. Rollups older than the retained raw window are
+// deliberately preserved so raw-event retention cannot erase long-range
+// aggregate history.
 //
 // Why this exists: the rollup and first_seen tables are maintained
 // incrementally by insertHit at ingest time. The one-time backfill in
@@ -25,26 +27,41 @@ if (!url) {
 const sql = postgres(url, { max: 1, connection: { timezone: "UTC" } });
 
 async function main() {
-  // "raw" is weighted the same way the rollup rebuild below weights it
+// "raw" is weighted the same way the rollup rebuild below weights it
   // (SUM(1/sample_rate), not COUNT(*)) so this comparison stays meaningful
   // once sampled traffic is involved — an unweighted COUNT(*) would never
   // match the weighted rollup total for any sampled row.
+  const [window] = await sql`
+    SELECT MIN(created_at)::date AS min_day, MAX(created_at)::date AS max_day
+    FROM bot_hits
+    WHERE heartbeat = FALSE
+  `;
+
+  if (!window.min_day || !window.max_day) {
+    console.log("no retained raw events; rollups were left unchanged");
+    return;
+  }
+
   const [before] = await sql`
     SELECT
-      (SELECT COALESCE(ROUND(SUM(1.0/NULLIF(sample_rate,0))), 0) FROM bot_hits WHERE heartbeat = FALSE)::int AS raw,
-      (SELECT COALESCE(SUM(hits), 0) FROM bot_hits_daily)::int AS rollup
+      (SELECT COALESCE(ROUND(SUM(1.0/NULLIF(sample_rate,0))), 0)
+       FROM bot_hits
+       WHERE heartbeat = FALSE
+         AND created_at::date BETWEEN ${window.min_day} AND ${window.max_day})::int AS raw,
+      (SELECT COALESCE(SUM(hits), 0)
+       FROM bot_hits_daily
+       WHERE day BETWEEN ${window.min_day} AND ${window.max_day})::int AS rollup
   `;
-  console.log(`before:  raw=${before.raw}  rollup=${before.rollup}  gap=${before.raw - before.rollup}`);
+  console.log(`window: ${window.min_day} through ${window.max_day}`);
+  console.log(`before: raw=${before.raw} rollup=${before.rollup} gap=${before.raw - before.rollup}`);
 
   await sql.begin(async (tx) => {
-    // Rollup is fully derived from raw, so rebuild it wholesale. DELETE (not
-    // TRUNCATE) keeps the operation MVCC-friendly against concurrent inserts.
-    // ON CONFLICT DO UPDATE (rather than assuming the table is empty after
-    // DELETE) keeps this idempotent against a concurrent insertHit landing a
-    // new (day, project, bot, category, status_class) row between the
-    // DELETE and this INSERT — without it, that race aborts the whole
-    // transaction and "safe to run any time" would be false.
-    await tx`DELETE FROM bot_hits_daily`;
+    // Rebuild only the date window still represented by raw events. Older
+    // rollups may outlive raw retention and must not be deleted here.
+    await tx`
+      DELETE FROM bot_hits_daily
+      WHERE day BETWEEN ${window.min_day} AND ${window.max_day}
+    `;
     await tx`
       INSERT INTO bot_hits_daily (day, project_name, bot_name, bot_category, status_class, hits, verified_hits)
       SELECT DATE(created_at), project_name, bot_name, bot_category,
@@ -81,11 +98,16 @@ async function main() {
 
   const [after] = await sql`
     SELECT
-      (SELECT COALESCE(ROUND(SUM(1.0/NULLIF(sample_rate,0))), 0) FROM bot_hits WHERE heartbeat = FALSE)::int AS raw,
-      (SELECT COALESCE(SUM(hits), 0) FROM bot_hits_daily)::int AS rollup
+      (SELECT COALESCE(ROUND(SUM(1.0/NULLIF(sample_rate,0))), 0)
+       FROM bot_hits
+       WHERE heartbeat = FALSE
+         AND created_at::date BETWEEN ${window.min_day} AND ${window.max_day})::int AS raw,
+      (SELECT COALESCE(SUM(hits), 0)
+       FROM bot_hits_daily
+       WHERE day BETWEEN ${window.min_day} AND ${window.max_day})::int AS rollup
   `;
-  console.log(`after:   raw=${after.raw}  rollup=${after.rollup}  gap=${after.raw - after.rollup}`);
-  console.log(after.raw === after.rollup ? "reconciled: rollup matches raw" : "WARNING: gap remains (concurrent writes?) — re-run");
+  console.log(`after:  raw=${after.raw} rollup=${after.rollup} gap=${after.raw - after.rollup}`);
+  console.log(after.raw === after.rollup ? "reconciled: retained rollup window matches raw" : "WARNING: retained rollup window has a gap (concurrent writes?) — re-run");
 }
 
 try {

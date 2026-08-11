@@ -32,11 +32,10 @@ import { normalizeBotCategory, AI_AGENT_BOTS, AI_SEARCH_BOTS, MONITORING_BOTS } 
 import { PATTERNS } from "./bots";
 
 // A raw bot_hits row can represent more than one real hit when the ingest
-// side applies sampling (route.ts clamps sample_rate to [0.001, 1] and
-// defaults to 1). Weight every raw-row count by 1/sample_rate so a row with
-// sample_rate=0.1 counts as ~10 real hits. NULLIF guards a stray 0.
-// sample_rate defaults to 1, so SUM(HIT_WEIGHT_SQL) is identical to
-// COUNT(*) for all unsampled data — this is an identity-preserving change.
+// side applies sampling. The route accepts only exact reciprocal rates
+// (1, .5, .25, .1), so every weighted bucket is an integer and can agree
+// exactly with the integer daily rollup. NULLIF also keeps old malformed rows
+// from dividing by zero.
 const HIT_WEIGHT_SQL = "1.0/NULLIF(sample_rate,0)";
 
 // Appends a category filter to `values` and returns the SQL clause referencing it.
@@ -108,6 +107,15 @@ export function createDbClient(databaseUrl: string) {
   });
 
   async function insertHit(hit: BotHit): Promise<void> {
+    if (hit.heartbeat) {
+      await upsertProjectHeartbeat({
+        project_name: hit.project_name,
+        environment: hit.environment,
+        deployment_url: hit.deployment_url,
+      });
+      return;
+    }
+
     // Generate created_at once in JS so the raw row and the rollup `day`
     // (UTC date of this same timestamp) can never disagree.
     const createdAt = new Date();
@@ -126,9 +134,6 @@ export function createDbClient(databaseUrl: string) {
           ${hit.deployment_url}, ${hit.vercel_id}, ${hit.is_api_route}, ${hit.sample_rate}, ${hit.heartbeat}
         )
       `;
-
-      // Heartbeats aren't real bot traffic — skip rollup + first_seen bookkeeping.
-      if (hit.heartbeat) return;
 
       const statusClass = statusClassOf(hit.status_code);
       // A sampled row (sample_rate < 1) represents more than one real hit —
@@ -157,6 +162,24 @@ export function createDbClient(databaseUrl: string) {
           first_seen = LEAST(bot_first_seen.first_seen, EXCLUDED.first_seen)
       `;
     });
+  }
+
+  async function upsertProjectHeartbeat(input: {
+    project_name: string;
+    environment: string;
+    deployment_url: string;
+  }): Promise<void> {
+    await sql`
+      INSERT INTO project_health (
+        project_name, last_heartbeat_at, environment, deployment_url
+      ) VALUES (
+        ${input.project_name}, now(), ${input.environment}, ${input.deployment_url}
+      )
+      ON CONFLICT (project_name) DO UPDATE SET
+        last_heartbeat_at = GREATEST(project_health.last_heartbeat_at, EXCLUDED.last_heartbeat_at),
+        environment = EXCLUDED.environment,
+        deployment_url = EXCLUDED.deployment_url
+    `;
   }
 
   async function queryFiltered(params: {
@@ -250,7 +273,7 @@ export function createDbClient(databaseUrl: string) {
           bot_name,
           bot_category,
           ROUND(SUM(${HIT_WEIGHT_SQL}))::int as total_hits,
-          ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified'))::int as verified_hits,
+          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified')), 0)::int as verified_hits,
           STRING_AGG(DISTINCT project_name, ', ' ORDER BY project_name) as projects,
           MAX(created_at)::text as last_seen
         FROM bot_hits
@@ -269,7 +292,7 @@ export function createDbClient(databaseUrl: string) {
         bot_name,
         bot_category,
         ROUND(SUM(${HIT_WEIGHT_SQL}))::int as total_hits,
-        ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified'))::int as verified_hits,
+        COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified')), 0)::int as verified_hits,
         STRING_AGG(DISTINCT project_name, ', ' ORDER BY project_name) as projects,
         MAX(created_at)::text as last_seen
       FROM bot_hits
@@ -377,21 +400,21 @@ export function createDbClient(databaseUrl: string) {
           ${projectClause}
       ),
       project_rank AS (
-        SELECT project_name, ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC, project_name) AS rank
+        SELECT project_name, ROW_NUMBER() OVER (ORDER BY SUM(${HIT_WEIGHT_SQL}) DESC, project_name) AS rank
         FROM base
         GROUP BY project_name
       ),
       page_rank AS (
-        SELECT path, ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC, path) AS rank
+        SELECT path, ROW_NUMBER() OVER (ORDER BY SUM(${HIT_WEIGHT_SQL}) DESC, path) AS rank
         FROM base
         GROUP BY path
       )
       SELECT
         COALESCE(MAX(base.bot_name), $1) AS bot_name,
         COALESCE(MAX(base.bot_category), 'unknown') AS bot_category,
-        COUNT(*)::int AS total_hits,
-        COUNT(*) FILTER (WHERE confidence = 'verified')::int AS verified_hits,
-        COUNT(*) FILTER (WHERE confidence = 'ua_only')::int AS ua_only_hits,
+        ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS total_hits,
+        COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified')), 0)::int AS verified_hits,
+        COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'ua_only')), 0)::int AS ua_only_hits,
         COUNT(DISTINCT base.project_name)::int AS projects_hit,
         COALESCE(MAX(pr.project_name) FILTER (WHERE pr.rank = 1), '') AS top_project,
         COALESCE(MAX(pg.path) FILTER (WHERE pg.rank = 1), '') AS top_page,
@@ -421,7 +444,7 @@ export function createDbClient(databaseUrl: string) {
       SELECT
         project_name AS project,
         path,
-        COUNT(*)::int AS count,
+        ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS count,
         $1 AS top_bot,
         MAX(created_at)::text AS last_seen
       FROM bot_hits
@@ -448,7 +471,7 @@ export function createDbClient(databaseUrl: string) {
     return sql.unsafe(`
       SELECT
         EXTRACT(HOUR FROM created_at)::int AS hour,
-        COUNT(*)::int AS count
+        ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS count
       FROM bot_hits
       WHERE created_at >= $1
         AND created_at <= $2
@@ -496,14 +519,14 @@ export function createDbClient(databaseUrl: string) {
           ${categoryClause}
           ${botNameClause}
         GROUP BY bot_name
-        ORDER BY COUNT(*) DESC, bot_name
+        ORDER BY SUM(${HIT_WEIGHT_SQL}) DESC, bot_name
         LIMIT ${limitParam}
       )
       SELECT
         DATE_TRUNC('${truncUnit}', created_at)::date::text AS period,
         bot_name,
         MAX(bot_category)::text AS bot_category,
-        COUNT(*)::int AS count
+        ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS count
       FROM bot_hits
       WHERE created_at >= $1
         AND created_at <= $2
@@ -566,26 +589,26 @@ export function createDbClient(databaseUrl: string) {
             WHEN status_code >= 500 THEN '5xx'
             ELSE 'unknown'
           END AS status_class,
-          COUNT(*)::int AS count
+          ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS count
         FROM base_scode GROUP BY 1, 2 ORDER BY 1, 2
       ),
       summary AS (
         SELECT
-          COUNT(*)::int AS total_hits,
-          COUNT(*) FILTER (WHERE status_code > 0)::int AS known_status_hits,
-          COUNT(*) FILTER (WHERE status_code >= 200 AND status_code < 300)::int AS success_hits,
-          COUNT(*) FILTER (WHERE status_code >= 300 AND status_code < 400)::int AS redirect_hits,
-          COUNT(*) FILTER (WHERE status_code >= 400 AND status_code < 500)::int AS client_error_hits,
-          COUNT(*) FILTER (WHERE status_code >= 500)::int AS server_error_hits,
-          COUNT(*) FILTER (WHERE status_code = 0)::int AS unknown_status_hits,
-          COUNT(*) FILTER (WHERE is_api_route = TRUE OR path LIKE '/api/%')::int AS api_route_hits,
-          COUNT(*) FILTER (
+          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL})), 0)::int AS total_hits,
+          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code > 0)), 0)::int AS known_status_hits,
+          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code >= 200 AND status_code < 300)), 0)::int AS success_hits,
+          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code >= 300 AND status_code < 400)), 0)::int AS redirect_hits,
+          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code >= 400 AND status_code < 500)), 0)::int AS client_error_hits,
+          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code >= 500)), 0)::int AS server_error_hits,
+          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code = 0)), 0)::int AS unknown_status_hits,
+          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE is_api_route = TRUE OR path LIKE '/api/%')), 0)::int AS api_route_hits,
+          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (
             WHERE path ~* '(^|/)(admin|login|wp-admin|wp-login|phpmyadmin|xmlrpc\\.php|config\\.php)(/|$|\\.)'
                OR path ~* '(^|/)(\\.env|\\.git|\\.aws|\\.ssh|\\.htaccess|\\.htpasswd)($|/)'
                OR path ~* '/(etc/passwd|etc/shadow|proc/self)'
                OR path ~* '\\.(bak|sql|backup|old|dump)(\\.gz)?$'
-          )::int AS sensitive_path_hits,
-          COUNT(*) FILTER (WHERE confidence = 'ua_only')::int AS ua_only_hits
+          )), 0)::int AS sensitive_path_hits,
+          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'ua_only')), 0)::int AS ua_only_hits
         FROM base
       ),
       buckets AS (
@@ -597,24 +620,24 @@ export function createDbClient(databaseUrl: string) {
             WHEN status_code >= 500 THEN '5xx'
             ELSE 'unknown'
           END AS status_class,
-          COUNT(*)::int AS count
+          ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS count
         FROM base GROUP BY status_class ORDER BY status_class
       ),
       sc_proj_rank AS (
-        SELECT status_code, project_name, ROW_NUMBER() OVER (PARTITION BY status_code ORDER BY COUNT(*) DESC, project_name) AS rank
+          SELECT status_code, project_name, ROW_NUMBER() OVER (PARTITION BY status_code ORDER BY SUM(${HIT_WEIGHT_SQL}) DESC, project_name) AS rank
         FROM base_scode GROUP BY status_code, project_name
       ),
       sc_bot_rank AS (
-        SELECT status_code, bot_name, ROW_NUMBER() OVER (PARTITION BY status_code ORDER BY COUNT(*) DESC, bot_name) AS rank
+          SELECT status_code, bot_name, ROW_NUMBER() OVER (PARTITION BY status_code ORDER BY SUM(${HIT_WEIGHT_SQL}) DESC, bot_name) AS rank
         FROM base_scode GROUP BY status_code, bot_name
       ),
       sc_path_rank AS (
-        SELECT status_code, path, ROW_NUMBER() OVER (PARTITION BY status_code ORDER BY COUNT(*) DESC, path) AS rank
+          SELECT status_code, path, ROW_NUMBER() OVER (PARTITION BY status_code ORDER BY SUM(${HIT_WEIGHT_SQL}) DESC, path) AS rank
         FROM base_scode GROUP BY status_code, path
       ),
       status_codes AS (
         SELECT
-          b.status_code, COUNT(*)::int AS count,
+          b.status_code, ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS count,
           COALESCE(MAX(pr.project_name) FILTER (WHERE pr.rank = 1), '') AS top_project,
           COALESCE(MAX(br.bot_name) FILTER (WHERE br.rank = 1), '') AS top_bot,
           COALESCE(MAX(pa.path) FILTER (WHERE pa.rank = 1), '') AS top_path,
@@ -629,16 +652,16 @@ export function createDbClient(databaseUrl: string) {
         SELECT * FROM base_scode WHERE project_name != ''
       ),
       ps_bot_rank AS (
-        SELECT project_name, status_code, bot_name, ROW_NUMBER() OVER (PARTITION BY project_name, status_code ORDER BY COUNT(*) DESC, bot_name) AS rank
+          SELECT project_name, status_code, bot_name, ROW_NUMBER() OVER (PARTITION BY project_name, status_code ORDER BY SUM(${HIT_WEIGHT_SQL}) DESC, bot_name) AS rank
         FROM ps_base GROUP BY project_name, status_code, bot_name
       ),
       ps_path_rank AS (
-        SELECT project_name, status_code, path, ROW_NUMBER() OVER (PARTITION BY project_name, status_code ORDER BY COUNT(*) DESC, path) AS rank
+          SELECT project_name, status_code, path, ROW_NUMBER() OVER (PARTITION BY project_name, status_code ORDER BY SUM(${HIT_WEIGHT_SQL}) DESC, path) AS rank
         FROM ps_base GROUP BY project_name, status_code, path
       ),
       project_statuses AS (
         SELECT
-          b.project_name AS project, b.status_code, COUNT(*)::int AS count,
+          b.project_name AS project, b.status_code, ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS count,
           COALESCE(MAX(br.bot_name) FILTER (WHERE br.rank = 1), '') AS top_bot,
           COALESCE(MAX(pa.path) FILTER (WHERE pa.rank = 1), '') AS top_path,
           MAX(b.created_at)::text AS last_seen
@@ -648,16 +671,16 @@ export function createDbClient(databaseUrl: string) {
         GROUP BY b.project_name, b.status_code ORDER BY count DESC, b.project_name, b.status_code LIMIT ${otherLimit}
       ),
       bsc_proj_rank AS (
-        SELECT bot_name, bot_category, status_code, project_name, ROW_NUMBER() OVER (PARTITION BY bot_name, bot_category, status_code ORDER BY COUNT(*) DESC, project_name) AS rank
+          SELECT bot_name, bot_category, status_code, project_name, ROW_NUMBER() OVER (PARTITION BY bot_name, bot_category, status_code ORDER BY SUM(${HIT_WEIGHT_SQL}) DESC, project_name) AS rank
         FROM base_scode GROUP BY bot_name, bot_category, status_code, project_name
       ),
       bsc_path_rank AS (
-        SELECT bot_name, bot_category, status_code, path, ROW_NUMBER() OVER (PARTITION BY bot_name, bot_category, status_code ORDER BY COUNT(*) DESC, path) AS rank
+          SELECT bot_name, bot_category, status_code, path, ROW_NUMBER() OVER (PARTITION BY bot_name, bot_category, status_code ORDER BY SUM(${HIT_WEIGHT_SQL}) DESC, path) AS rank
         FROM base_scode GROUP BY bot_name, bot_category, status_code, path
       ),
       bot_status_codes AS (
         SELECT
-          b.bot_name, b.bot_category, b.status_code, COUNT(*)::int AS count,
+          b.bot_name, b.bot_category, b.status_code, ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS count,
           COALESCE(MAX(pr.project_name) FILTER (WHERE pr.rank = 1), '') AS top_project,
           COALESCE(MAX(pa.path) FILTER (WHERE pa.rank = 1), '') AS top_path,
           MAX(b.created_at)::text AS last_seen
@@ -667,12 +690,12 @@ export function createDbClient(databaseUrl: string) {
         GROUP BY b.bot_name, b.bot_category, b.status_code ORDER BY count DESC, b.bot_name, b.status_code LIMIT ${botScLimit}
       ),
       psc_bot_rank AS (
-        SELECT project_name, path, status_code, bot_name, ROW_NUMBER() OVER (PARTITION BY project_name, path, status_code ORDER BY COUNT(*) DESC, bot_name) AS rank
+          SELECT project_name, path, status_code, bot_name, ROW_NUMBER() OVER (PARTITION BY project_name, path, status_code ORDER BY SUM(${HIT_WEIGHT_SQL}) DESC, bot_name) AS rank
         FROM base_scode GROUP BY project_name, path, status_code, bot_name
       ),
       page_status_codes AS (
         SELECT
-          b.project_name AS project, b.path, b.status_code, COUNT(*)::int AS count,
+          b.project_name AS project, b.path, b.status_code, ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS count,
           COALESCE(MAX(br.bot_name) FILTER (WHERE br.rank = 1), '') AS top_bot,
           MAX(b.created_at)::text AS last_seen
         FROM base_scode b
@@ -683,12 +706,12 @@ export function createDbClient(databaseUrl: string) {
         SELECT * FROM base WHERE status_code >= 400
       ),
       fp_bot_rank AS (
-        SELECT project_name, path, status_code, bot_name, ROW_NUMBER() OVER (PARTITION BY project_name, path, status_code ORDER BY COUNT(*) DESC, bot_name) AS rank
+          SELECT project_name, path, status_code, bot_name, ROW_NUMBER() OVER (PARTITION BY project_name, path, status_code ORDER BY SUM(${HIT_WEIGHT_SQL}) DESC, bot_name) AS rank
         FROM failing GROUP BY project_name, path, status_code, bot_name
       ),
       failing_paths AS (
         SELECT
-          f.project_name AS project, f.path, f.status_code, COUNT(*)::int AS count,
+          f.project_name AS project, f.path, f.status_code, ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS count,
           COALESCE(MAX(br.bot_name) FILTER (WHERE br.rank = 1), '') AS top_bot,
           MAX(f.created_at)::text AS last_seen
         FROM failing f
@@ -697,21 +720,21 @@ export function createDbClient(databaseUrl: string) {
       ),
       bot_top_status AS (
         SELECT bot_name, bot_category, status_code,
-          ROW_NUMBER() OVER (PARTITION BY bot_name, bot_category ORDER BY COUNT(*) DESC, status_code DESC) AS rank
+          ROW_NUMBER() OVER (PARTITION BY bot_name, bot_category ORDER BY SUM(${HIT_WEIGHT_SQL}) DESC, status_code DESC) AS rank
         FROM base_scode GROUP BY bot_name, bot_category, status_code
       ),
       bot_statuses AS (
         SELECT
           b.bot_name, b.bot_category,
-          COUNT(*)::int AS total_hits,
-          COUNT(*) FILTER (WHERE b.status_code >= 400)::int AS error_hits,
-          COUNT(*) FILTER (WHERE b.confidence = 'ua_only')::int AS ua_only_hits,
+          ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS total_hits,
+          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE b.status_code >= 400)), 0)::int AS error_hits,
+          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE b.confidence = 'ua_only')), 0)::int AS ua_only_hits,
           COALESCE(MAX(ts.status_code) FILTER (WHERE ts.rank = 1), 0)::int AS top_status_code,
           MAX(b.created_at)::text AS last_seen
         FROM base b
         LEFT JOIN bot_top_status ts ON ts.bot_name = b.bot_name AND ts.bot_category = b.bot_category AND ts.rank = 1
         GROUP BY b.bot_name, b.bot_category
-        HAVING COUNT(*) FILTER (WHERE b.status_code >= 400) > 0 OR COUNT(*) FILTER (WHERE b.confidence = 'ua_only') > 0
+        HAVING SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE b.status_code >= 400) > 0 OR SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE b.confidence = 'ua_only') > 0
         ORDER BY error_hits DESC, ua_only_hits DESC, total_hits DESC LIMIT ${scLimit}
       ),
       sensitive AS (
@@ -725,12 +748,12 @@ export function createDbClient(databaseUrl: string) {
         )
       ),
       sen_bot_rank AS (
-        SELECT project_name, path, bot_name, ROW_NUMBER() OVER (PARTITION BY project_name, path ORDER BY COUNT(*) DESC, bot_name) AS rank
+        SELECT project_name, path, bot_name, ROW_NUMBER() OVER (PARTITION BY project_name, path ORDER BY SUM(${HIT_WEIGHT_SQL}) DESC, bot_name) AS rank
         FROM sensitive GROUP BY project_name, path, bot_name
       ),
       sensitive_hits AS (
         SELECT
-          s.project_name AS project, s.path, COUNT(*)::int AS count,
+          s.project_name AS project, s.path, ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS count,
           COALESCE(MAX(br.bot_name) FILTER (WHERE br.rank = 1), '') AS top_bot,
           MAX(s.created_at)::text AS last_seen
         FROM sensitive s
@@ -837,8 +860,8 @@ export function createDbClient(databaseUrl: string) {
       bot_conf_ai_all AS (
         SELECT bot_name, bot_category,
           ROUND(SUM(${HIT_WEIGHT_SQL}))::int as total_hits,
-          ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified'))::int as verified_hits,
-          ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'ua_only'))::int as ua_only_hits,
+          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified')), 0)::int as verified_hits,
+          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'ua_only')), 0)::int as ua_only_hits,
           STRING_AGG(DISTINCT project_name, ', ' ORDER BY project_name) as projects,
           MAX(created_at)::text as last_seen
         FROM base_nocat
@@ -862,9 +885,9 @@ export function createDbClient(databaseUrl: string) {
       ),
       total AS (
         SELECT
-          ROUND(SUM(${HIT_WEIGHT_SQL}))::int as count,
-          ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code >= 400))::int as error_count,
-          ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code > 0))::int as known_status_count
+          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL})), 0)::int as count,
+          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code >= 400)), 0)::int as error_count,
+          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code > 0)), 0)::int as known_status_count
         FROM base
       ),
       top_bots AS (
@@ -900,8 +923,8 @@ export function createDbClient(databaseUrl: string) {
         -- raw limit to compensate.
         SELECT bot_name, bot_category,
           ROUND(SUM(${HIT_WEIGHT_SQL}))::int as total_hits,
-          ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified'))::int as verified_hits,
-          ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'ua_only'))::int as ua_only_hits,
+          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified')), 0)::int as verified_hits,
+          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'ua_only')), 0)::int as ua_only_hits,
           STRING_AGG(DISTINCT project_name, ', ' ORDER BY project_name) as projects,
           MAX(created_at)::text as last_seen
         FROM base GROUP BY bot_name, bot_category ORDER BY total_hits DESC LIMIT 20
@@ -909,8 +932,8 @@ export function createDbClient(databaseUrl: string) {
       bot_conf_ai AS (
         SELECT bot_name, bot_category,
           ROUND(SUM(${HIT_WEIGHT_SQL}))::int as total_hits,
-          ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified'))::int as verified_hits,
-          ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'ua_only'))::int as ua_only_hits,
+          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified')), 0)::int as verified_hits,
+          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'ua_only')), 0)::int as ua_only_hits,
           STRING_AGG(DISTINCT project_name, ', ' ORDER BY project_name) as projects,
           MAX(created_at)::text as last_seen
         FROM base
@@ -931,12 +954,12 @@ export function createDbClient(databaseUrl: string) {
       proj_agg AS (
         SELECT project_name as project,
           ROUND(SUM(${HIT_WEIGHT_SQL}))::int as total_hits,
-          ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (
+          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (
             WHERE bot_category IN (${AI_CAT_SQL})
                OR bot_name IN (${AI_BOT_NAMES_SQL})
-          ))::int as ai_hits,
-          ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified'))::int as verified_hits,
-          ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'ua_only'))::int as ua_only_hits,
+          )), 0)::int as ai_hits,
+          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified')), 0)::int as verified_hits,
+          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'ua_only')), 0)::int as ua_only_hits,
           MAX(created_at)::text as last_seen
         FROM base_proj
         GROUP BY project_name
@@ -1322,9 +1345,13 @@ export function createDbClient(databaseUrl: string) {
     const result = await sql.unsafe(`
       SELECT
         COALESCE((SELECT json_agg(project_name) FROM (
-          SELECT DISTINCT project_name FROM bot_hits WHERE heartbeat = FALSE AND project_name != '' ORDER BY project_name
+          SELECT DISTINCT project_name FROM (
+            SELECT project_name FROM bot_hits WHERE heartbeat = FALSE AND project_name != ''
+            UNION
+            SELECT project_name FROM project_health WHERE project_name != ''
+          ) projects ORDER BY project_name
         ) t), '[]') as projects_json,
-        (SELECT MAX(created_at) FROM bot_hits WHERE heartbeat = TRUE) as latest_heartbeat,
+        (SELECT MAX(last_heartbeat_at) FROM project_health WHERE project_name != '' ${projectClause}) as latest_heartbeat,
         (SELECT MAX(created_at) FROM bot_hits WHERE heartbeat = FALSE ${projectClause}) as latest_event
     `, values);
 
@@ -1352,6 +1379,7 @@ export function createDbClient(databaseUrl: string) {
     fetchStatusBatch,
     fetchStatsBatch,
     fetchMeta,
+    upsertProjectHeartbeat,
     fetchRollupStats,
     allBotDetailsRollup,
     close,

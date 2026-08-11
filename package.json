@@ -30,6 +30,8 @@
     "lint": "eslint",
     "migrate": "node scripts/migrate.mjs",
     "reconcile-rollups": "node scripts/reconcile-rollups.mjs",
+    "retain-raw": "node scripts/retain-raw-events.mjs",
+    "verify:prefilter": "node scripts/verify-bot-prefilter-sync.mjs",
     "test": "vitest run",
     "test:unit": "vitest run src",
     "test:integration": "vitest run test/integration"

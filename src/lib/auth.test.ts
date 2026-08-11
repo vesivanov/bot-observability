@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  authenticateIngestion,
   checkLoginRateLimit,
   createSessionValue,
+  getAdminToken,
   getBotLogToken,
+  getIngestionConfig,
   isSessionValid,
   isStrongSecret,
   isTokenValid,
@@ -21,9 +24,52 @@ afterEach(() => {
 });
 
 describe("auth configuration", () => {
-  it("reads the shared server-side token", () => {
+  it("accepts the legacy server-side token only during migration", () => {
+    delete process.env.BOT_ADMIN_TOKEN;
     process.env.BOT_LOG_TOKEN = "t".repeat(32);
+    process.env.BOT_ACCEPT_LEGACY_INGEST = "true";
     expect(getBotLogToken()).toBe("t".repeat(32));
+    expect(getIngestionConfig()).toMatchObject({ configured: true, invalid: false });
+
+    process.env.BOT_ACCEPT_LEGACY_INGEST = "false";
+    expect(getIngestionConfig()).toMatchObject({ configured: true, invalid: false, credentials: [] });
+  });
+
+  it("keeps admin, per-project, and legacy credentials separate during migration", () => {
+    const admin = "a".repeat(32);
+    const ingest = "i".repeat(32);
+    const legacy = "l".repeat(32);
+    process.env.BOT_ADMIN_TOKEN = admin;
+    process.env.BOT_INGEST_TOKENS = JSON.stringify({ "tracked-site": ingest });
+    process.env.BOT_LOG_TOKEN = legacy;
+    process.env.BOT_ACCEPT_LEGACY_INGEST = "true";
+
+    expect(getAdminToken()).toBe(admin);
+    expect(authenticateIngestion(new Request("https://example.com", {
+      headers: { authorization: `Bearer ${ingest}` },
+    }))).toEqual({ projectName: "tracked-site", legacy: false });
+    expect(authenticateIngestion(new Request("https://example.com", {
+      headers: { authorization: `Bearer ${admin}` },
+    }))).toBeNull();
+    expect(authenticateIngestion(new Request("https://example.com", {
+      headers: { authorization: `Bearer ${legacy}` },
+    }))).toEqual({ projectName: null, legacy: true });
+
+    process.env.BOT_ACCEPT_LEGACY_INGEST = "false";
+    expect(authenticateIngestion(new Request("https://example.com", {
+      headers: { authorization: `Bearer ${legacy}` },
+    }))).toBeNull();
+  });
+
+  it("marks malformed or weak ingestion mappings as invalid", () => {
+    process.env.BOT_INGEST_TOKENS = "not-json";
+    expect(getIngestionConfig()).toMatchObject({ configured: true, invalid: true });
+
+    process.env.BOT_INGEST_TOKENS = JSON.stringify({ "tracked-site": "short" });
+    expect(getIngestionConfig()).toMatchObject({ configured: true, invalid: true });
+
+    process.env.BOT_INGEST_TOKENS = JSON.stringify({});
+    expect(getIngestionConfig()).toMatchObject({ configured: true, invalid: true });
   });
 });
 
