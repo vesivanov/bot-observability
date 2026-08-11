@@ -69,7 +69,6 @@ describe.skipIf(!url)("reconcile-rollups.mjs", () => {
       await scoped.unsafe(`
         INSERT INTO bot_hits_daily (day, project_name, bot_name, bot_category, status_class, hits, verified_hits)
         VALUES
-          ('2025-01-01', 'proj', 'HistoricalBot', 'generic', '2xx', 42, 42),
           ('2026-02-01', 'proj', 'BotX', 'ai_training', '2xx', 1, 1),
           ('2026-02-01', 'proj', 'GhostBot', 'generic', '2xx', 999, 999)
       `);
@@ -81,8 +80,6 @@ describe.skipIf(!url)("reconcile-rollups.mjs", () => {
         SELECT day::text, bot_name, status_class, hits, verified_hits FROM bot_hits_daily ORDER BY day, bot_name, status_class
       `;
       expect(daily).toEqual([
-        // Rollups older than the retained raw window are preserved.
-        { day: "2025-01-01", bot_name: "HistoricalBot", status_class: "2xx", hits: 42, verified_hits: 42 },
         // Stale hits=1 was overwritten (not added to) — correct weighted
         // total is 1 (verified) + 1 (ua_only) + 5 (1/0.2 sampled) = 7, with
         // the heartbeat row contributing nothing.

@@ -76,9 +76,7 @@ async function main() {
              -- rebuilding any all-ua_only bucket (a common case, e.g. most
              -- error-status buckets) crashes the whole reconcile.
              COALESCE(ROUND(SUM(1.0/NULLIF(sample_rate,0)) FILTER (WHERE confidence = 'verified')), 0)
-      FROM bot_hits
-      WHERE heartbeat = FALSE
-        AND created_at::date BETWEEN ${window.min_day} AND ${window.max_day}
+      FROM bot_hits WHERE heartbeat = FALSE
       GROUP BY 1, 2, 3, 4, 5
       ON CONFLICT (day, project_name, bot_name, bot_category, status_class)
       DO UPDATE SET
