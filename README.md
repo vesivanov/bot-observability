@@ -17,7 +17,11 @@ A web dashboard for monitoring and analyzing bot/crawler traffic across web proj
 
 ## Screenshots
 
-<!-- TODO: no screenshots included yet. Run the app locally (see Getting Started) and add dashboard images here before/after publishing, if desired. -->
+The public landing page includes a no-database preview with illustrative data. These captures show the overall product surface and the dashboard’s crawler-mix panel:
+
+![Bot Observability landing page](docs/screenshots/landing-page.png)
+
+![Dashboard preview with crawler mix](docs/screenshots/dashboard-preview.png)
 
 ## Tech Stack
 
@@ -80,6 +84,8 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000). The landing page is at `/`, the dashboard at `/dashboard`.
+
+For a first local check, open `/` before configuring a database. The landing page and dashboard preview use illustrative data; `/dashboard` requires a configured `BOT_ADMIN_TOKEN` and `DATABASE_URL`.
 
 ### Deploying
 
