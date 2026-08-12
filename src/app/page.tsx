@@ -409,12 +409,12 @@ export default async function HomePage() {
         </p>
         <pre className="mt-3 overflow-x-auto rounded border border-neutral-800 bg-neutral-950 p-3 font-mono text-xs leading-6 text-neutral-300">
 {`npm install
-cp .env.example .env        # set DATABASE_URL and BOT_LOG_TOKEN
+cp .env.example .env        # set DATABASE_URL and the role-specific secrets
 npm run migrate
 npm run dev`}
         </pre>
         <p className="mt-3 max-w-2xl text-xs leading-5 text-neutral-500">
-          Open <span className="font-mono text-neutral-300">/dashboard</span> and sign in with your <span className="font-mono text-neutral-300">BOT_LOG_TOKEN</span>. Full setup, deployment, and ingestion docs are in the{" "}
+          Open <span className="font-mono text-neutral-300">/dashboard</span> and sign in with your <span className="font-mono text-neutral-300">BOT_ADMIN_TOKEN</span>. Send events with project-scoped <span className="font-mono text-neutral-300">BOT_INGEST_TOKENS</span>. Full setup, deployment, and ingestion docs are in the{" "}
           <a href={`${REPO_URL}#readme`} target="_blank" rel="noopener noreferrer" className="text-neutral-300 underline decoration-neutral-700 underline-offset-2 hover:text-white">
             README
           </a>.

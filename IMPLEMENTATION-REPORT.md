@@ -13,6 +13,14 @@ The improvements described in `IMPROVEMENTS.md` were implemented across the cent
 
 The implementation moves ingestion responsibility into the central collector, separates administrator and ingestion credentials, stores project heartbeats independently from raw events, hardens request and DNS verification paths, applies sampling consistently, and removes database/reporting work from the visitor-critical portions of the tracked-site middleware.
 
+## Visual reference
+
+These screenshots were captured from the local public landing page. The dashboard panels use illustrative example data rather than a production database; they show the UI shape and the main views available after setup.
+
+![Bot Observability landing page](docs/screenshots/landing-page.png)
+
+![Dashboard preview with crawler mix](docs/screenshots/dashboard-preview.png)
+
 ## Implemented changes
 
 ### 1. Authentication and project-scoped ingestion
