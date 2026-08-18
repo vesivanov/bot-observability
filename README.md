@@ -2,7 +2,21 @@
 
 ![CI](https://github.com/vesivanov/bot-observability/actions/workflows/ci.yml/badge.svg)
 
-A web dashboard for monitoring and analyzing bot/crawler traffic across web projects. Tracks AI crawlers, search engines, SEO tools, social previews, and more — so you know who is reading your content and why.
+Open-source, self-hosted analytics for AI crawlers, search engines, SEO tools, and automated agents.
+
+See who is crawling your websites, which URLs they request, how often they return, and whether those requests succeed. Track crawler activity across multiple projects from one web dashboard.
+
+## Built for SEO and GEO teams
+
+Bot Observability provides crawl-side evidence for search and AI visibility work:
+
+- Which AI, search, and SEO crawlers are visiting?
+- Which pages are they requesting?
+- Are important URLs returning errors or redirects?
+- Is crawler activity changing over time?
+- Is each project's logging pipeline healthy?
+
+It measures requests reaching your sites, not citations inside AI answers. Use it alongside search and AI visibility tools when you need both crawl activity and citation data.
 
 ## Features
 
@@ -14,6 +28,14 @@ A web dashboard for monitoring and analyzing bot/crawler traffic across web proj
 - **AI Crawler Intel** — Dedicated view for AI training and search crawlers with confidence breakdowns (verified vs UA-only) and a crawls-vs-visits breakdown by company
 - **Raw Events** — Filterable event log with bot name, path, project, IP, and user-agent details
 - **Data Health Monitoring** — Heartbeat freshness tracking to detect logging pipeline issues
+
+## Common use cases
+
+- **AI crawler monitoring** — Track GPTBot, ClaudeBot, PerplexityBot, Google-Extended, and other AI-related crawlers.
+- **Technical SEO monitoring** — Find crawl errors, redirects, failing paths, and unexpected API or sensitive-route requests.
+- **GEO research** — See which automated agents and retrieval crawlers reach your content as part of broader AI visibility analysis.
+- **Multi-site reporting** — Compare crawler activity across websites, products, environments, or client projects.
+- **Privacy-conscious observability** — Self-host the dashboard and store submitted IPs only as keyed hashes.
 
 ## Screenshots
 

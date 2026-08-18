@@ -135,15 +135,15 @@ export default async function HomePage() {
     <div className="mx-auto max-w-5xl px-5 py-12 sm:px-6">
       <section className="grid gap-8 lg:grid-cols-[1.1fr_1fr] lg:items-center">
         <div className="max-w-2xl">
-          <p className="mb-3 text-xs font-medium uppercase tracking-wider text-amber-300">Open source · self-hosted</p>
+          <p className="mb-3 text-xs font-medium uppercase tracking-wider text-amber-300">Open source · self-hosted · built for SEO and GEO teams</p>
           <h1 className="text-3xl font-semibold tracking-tight text-neutral-100 sm:text-4xl">
-            Bot Observability
+            See who is crawling your websites
           </h1>
           <p className="mt-4 text-sm leading-6 text-neutral-400">
-            See exactly which AI crawlers, search engines, and other bots are reading your sites, which pages they hit, and whether those requests are healthy, broken, or worth blocking.
+            Bot Observability is a self-hosted dashboard for tracking AI crawlers, search engines, SEO tools, and automated agents across your web projects.
           </p>
           <p className="mt-3 text-sm leading-6 text-neutral-500">
-            It&apos;s a Next.js + Postgres app you run yourself: point it at your own database, drop one API call into your app, and traffic starts showing up in the dashboard below.
+            See which URLs they request, whether those requests succeed, and how crawler activity changes over time. Connect your app with one server-side API call and inspect the results across projects.
           </p>
 
           <div className="mt-6 flex flex-wrap items-center gap-3">
