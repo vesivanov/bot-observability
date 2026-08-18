@@ -3,8 +3,9 @@ import Link from "next/link";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Bot Observability",
-  description: "Crawler identity, bot traffic reporting, and event inspection for every project.",
+  title: "Bot Observability — AI Crawler & SEO Bot Analytics",
+  description:
+    "Track AI crawlers, search engines, SEO tools, and bot traffic across your websites with an open-source, self-hosted observability dashboard.",
   icons: {
     icon: "/icon.svg",
   },

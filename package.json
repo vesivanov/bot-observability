@@ -1,13 +1,21 @@
 {
   "name": "bot-observability",
   "version": "0.1.0",
-  "description": "A web dashboard for monitoring and analyzing bot/crawler traffic — AI training crawlers, search engines, SEO tools, and more — across web projects.",
+  "description": "Open-source, self-hosted analytics for AI crawlers, search engines, SEO tools, and automated agents across websites.",
   "keywords": [
     "bot-detection",
+    "bot-analytics",
+    "crawl-analytics",
+    "crawl-monitoring",
     "crawler",
     "analytics",
     "ai-crawlers",
+    "ai-search",
+    "seo-monitoring",
+    "geo",
+    "search-engine-optimization",
     "observability",
+    "self-hosted",
     "nextjs",
     "postgres"
   ],
