@@ -9,6 +9,7 @@ import {
   botHref,
   pct,
   errorRateAccent,
+  knownStatusAccent,
   Panel,
   StatTile,
   BarMeter,
@@ -130,7 +131,7 @@ export async function HealthViewServer({
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <StatTile label="Known status" value={`${pct(summary.known_status_hits, summary.total_hits)}%`} detail={`${summary.known_status_hits.toLocaleString()} of ${summary.total_hits.toLocaleString()} hits`} />
+        <StatTile label="Known status" value={`${pct(summary.known_status_hits, summary.total_hits)}%`} detail={`${summary.known_status_hits.toLocaleString()} of ${summary.total_hits.toLocaleString()} hits`} accent={knownStatusAccent(pct(summary.known_status_hits, summary.total_hits))} />
         <StatTile label="Error rate" value={`${pct(errorHits, summary.known_status_hits)}%`} detail={`${errorHits.toLocaleString()} 4xx/5xx hits`} accent={errorRateAccent(pct(errorHits, summary.known_status_hits))} />
         <StatTile label="4xx hits" value={summary.client_error_hits.toLocaleString()} detail="Client errors" accent={summary.client_error_hits > 0 ? "text-orange-300" : "text-neutral-300"} />
         <StatTile label="5xx hits" value={summary.server_error_hits.toLocaleString()} detail="Server errors" accent={summary.server_error_hits > 0 ? "text-rose-300" : "text-neutral-300"} />

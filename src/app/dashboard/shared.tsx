@@ -88,6 +88,20 @@ export function verifiedAccent(verifiedSharePct: number): string {
   return verifiedSharePct >= 50 ? "text-emerald-300" : "text-neutral-100";
 }
 
+// A reporter that stops sending a real status_code degrades silently: the
+// ingestion route defaults a missing/invalid value to 0 rather than
+// rejecting the hit (see src/app/api/bot-hit/route.ts statusCode()), so a
+// broken reporter still shows up as normal traffic everywhere except this
+// one ratio. This happened for real on three separate sites at once
+// (2026-08-10 through 2026-09-04) and went unnoticed for weeks because nothing
+// on this dashboard changed color when "Known status" quietly went to 0% —
+// give it the same bad/good threshold treatment as every other health metric.
+export function knownStatusAccent(knownStatusPct: number): string {
+  if (knownStatusPct < 50) return "text-rose-300";
+  if (knownStatusPct < 90) return "text-orange-300";
+  return "text-neutral-100";
+}
+
 export function eventHref(params: {
   project?: string;
   bot?: string;
