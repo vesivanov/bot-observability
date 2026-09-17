@@ -91,7 +91,7 @@ const AI_CAT_SQL = `'ai_training','ai_search','ai_agent','ai_crawler'`;
 export function createDbClient(databaseUrl: string) {
   const sql = postgres(databaseUrl, {
     max: 1,
-    idle_timeout: 1,
+    idle_timeout: 5,
     connect_timeout: 5,
     connection: {
       statement_timeout: 30000,
@@ -120,8 +120,18 @@ export function createDbClient(databaseUrl: string) {
     // (UTC date of this same timestamp) can never disagree.
     const createdAt = new Date();
 
-    await sql.begin(async (tx) => {
-      await tx`
+    const statusClass = statusClassOf(hit.status_code);
+    // A sampled row (sample_rate < 1) represents more than one real hit —
+    // weight the rollup increment by 1/sample_rate so bot_hits_daily.hits
+    // stays in agreement with the weighted raw-row aggregates.
+    const hitWeight = hit.sample_rate > 0 ? Math.round(1 / hit.sample_rate) : 1;
+    const verifiedIncrement = hit.confidence === "verified" ? hitWeight : 0;
+
+    // Keep the raw event, daily rollup, and first/last-seen update atomic while
+    // using a single database round trip. The former implementation opened a
+    // transaction and awaited three separate statements for every bot hit.
+    await sql`
+      WITH inserted_hit AS (
         INSERT INTO bot_hits (
           created_at, project_name, environment, host, path, query_string,
           method, status_code, bot_name, bot_category, confidence, user_agent,
@@ -133,35 +143,24 @@ export function createDbClient(databaseUrl: string) {
           ${hit.referer}, ${hit.ip}, ${hit.country}, ${hit.region}, ${hit.city}, ${hit.timezone},
           ${hit.deployment_url}, ${hit.vercel_id}, ${hit.is_api_route}, ${hit.sample_rate}, ${hit.heartbeat}
         )
-      `;
-
-      const statusClass = statusClassOf(hit.status_code);
-      // A sampled row (sample_rate < 1) represents more than one real hit —
-      // weight the rollup increment by 1/sample_rate so bot_hits_daily.hits
-      // stays in agreement with the weighted raw-row aggregates in
-      // fetchStatsBatch/movers/allBotDetails. sample_rate defaults to 1, so
-      // hitWeight is 1 and this is identical to the old `+1` increment for
-      // all unsampled data.
-      const hitWeight = hit.sample_rate > 0 ? Math.round(1 / hit.sample_rate) : 1;
-      const verifiedIncrement = hit.confidence === "verified" ? hitWeight : 0;
-
-      await tx`
+        RETURNING created_at, project_name, bot_name, bot_category
+      ), upserted_daily AS (
         INSERT INTO bot_hits_daily (day, project_name, bot_name, bot_category, status_class, hits, verified_hits)
-        VALUES (${createdAt}::date, ${hit.project_name}, ${hit.bot_name}, ${hit.bot_category}, ${statusClass}, ${hitWeight}, ${verifiedIncrement})
+        SELECT created_at::date, project_name, bot_name, bot_category,
+               ${statusClass}, ${hitWeight}, ${verifiedIncrement}
+        FROM inserted_hit
         ON CONFLICT (day, project_name, bot_name, bot_category, status_class)
         DO UPDATE SET
           hits = bot_hits_daily.hits + EXCLUDED.hits,
           verified_hits = bot_hits_daily.verified_hits + EXCLUDED.verified_hits
-      `;
-
-      await tx`
+        RETURNING 1
+      )
         INSERT INTO bot_first_seen (bot_name, first_seen, last_seen)
-        VALUES (${hit.bot_name}, ${createdAt}, ${createdAt})
+        SELECT bot_name, created_at, created_at FROM inserted_hit
         ON CONFLICT (bot_name) DO UPDATE SET
           last_seen = GREATEST(bot_first_seen.last_seen, EXCLUDED.last_seen),
           first_seen = LEAST(bot_first_seen.first_seen, EXCLUDED.first_seen)
-      `;
-    });
+    `;
   }
 
   async function upsertProjectHeartbeat(input: {
