@@ -7,8 +7,8 @@ const mocks = vi.hoisted(() => ({
   verifyBot: vi.fn(async () => "ua_only"),
 }));
 
-vi.mock("@/lib/db", () => ({
-  createDbClient: vi.fn(() => ({
+vi.mock("@/lib/request-db", () => ({
+  getRequestDb: vi.fn(() => ({
     insertHit: mocks.insertHit,
     upsertProjectHeartbeat: mocks.upsertProjectHeartbeat,
     close: mocks.close,
@@ -124,6 +124,32 @@ describe("POST /api/bot-hit", () => {
     });
     expect(mocks.insertHit.mock.calls[0][0].ip).toHaveLength(64);
     expect(mocks.insertHit.mock.calls[0][0].ip).not.toContain("203.0.113.10");
+  });
+
+  it("accepts a validated bot identity from an authenticated reporter", async () => {
+    const response = await POST(makeRequest({
+      user_agent: "Mozilla/5.0",
+      bot_name: "Googlebot",
+      bot_category: "search_crawler",
+    }, { authorization: `Bearer ${ingestToken}` }));
+
+    expect(response.status).toBe(201);
+    expect(mocks.insertHit.mock.calls[0][0]).toMatchObject({
+      bot_name: "Googlebot",
+      bot_category: "search_crawler",
+    });
+  });
+
+  it("ignores an invalid submitted bot category", async () => {
+    const response = await POST(makeRequest({
+      user_agent: "Mozilla/5.0",
+      bot_name: "FakeBot",
+      bot_category: "not_a_category",
+    }, { authorization: `Bearer ${ingestToken}` }));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ stored: false, reason: "not_bot" });
+    expect(mocks.insertHit).not.toHaveBeenCalled();
   });
 
   it("truncates oversized fields and clamps status codes", async () => {

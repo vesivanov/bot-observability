@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { detectBot } from "@/lib/bots";
-import { createDbClient } from "@/lib/db";
-import type { BotHit } from "@/lib/schema";
+import { getRequestDb } from "@/lib/request-db";
+import type { BotCategory, BotHit } from "@/lib/schema";
 import { verifyBot } from "@/lib/verify";
 import {
   authenticateIngestion,
@@ -21,6 +21,18 @@ export const ALLOWED_SAMPLE_RATES = [1, 0.5, 0.25, 0.1] as const;
 const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT_RPM = 120;
 const RATE_WINDOW_MS = 60_000;
+const BOT_CATEGORIES = new Set<BotCategory>([
+  "ai_training",
+  "ai_search",
+  "ai_agent",
+  "ai_crawler",
+  "search_crawler",
+  "seo_crawler",
+  "social_preview",
+  "monitoring",
+  "generic",
+  "unknown",
+]);
 
 function checkRateLimit(key: string): boolean {
   const now = Date.now();
@@ -65,6 +77,12 @@ function numberInRange(value: unknown, fallback: number, min: number, max: numbe
 
 function statusCode(payload: Payload) {
   return Math.round(numberInRange(payload.status_code ?? payload.status, 0, 0, 999));
+}
+
+function submittedBot(payload: Payload): { name: string; category: BotCategory } | null {
+  const name = text(payload.bot_name, "", 200).trim();
+  const category = text(payload.bot_category, "", 100) as BotCategory;
+  return name && BOT_CATEGORIES.has(category) ? { name, category } : null;
 }
 
 export function normalizeSampleRate(value: unknown): number {
@@ -137,7 +155,11 @@ export async function POST(request: Request) {
   // accepted only for the legacy migration path.
   const projectName = identity.projectName ?? submittedProject;
   const userAgent = text(payload.user_agent, request.headers.get("user-agent") ?? "");
-  const match = heartbeat ? null : detectBot(userAgent);
+  // Reporters already classify the bot to choose a sampling rate. Accept that
+  // identity from an authenticated reporter so the collector does not scan
+  // the full pattern list a second time; older reporters still fall back to
+  // authoritative server-side detection.
+  const match = heartbeat ? null : submittedBot(payload) ?? detectBot(userAgent);
 
   if (!match && !heartbeat) {
     return NextResponse.json({ stored: false, reason: "not_bot" });
@@ -146,7 +168,7 @@ export async function POST(request: Request) {
   const ip = text(payload.ip, firstHeaderIp(request), 128);
 
   if (heartbeat) {
-    const client = createDbClient(databaseUrl);
+    const client = getRequestDb(databaseUrl);
     try {
       await client.upsertProjectHeartbeat({
         project_name: projectName,
@@ -156,8 +178,6 @@ export async function POST(request: Request) {
     } catch (error) {
       console.error("[bot-hit] failed to store heartbeat", error);
       return jsonError("storage_failed", 500);
-    } finally {
-      await client.close();
     }
 
     return NextResponse.json({ stored: true, heartbeat: true, project: projectName });
@@ -195,14 +215,12 @@ export async function POST(request: Request) {
     heartbeat,
   };
 
-  const client = createDbClient(databaseUrl);
+  const client = getRequestDb(databaseUrl);
   try {
     await client.insertHit(hit);
   } catch (error) {
     console.error("[bot-hit] failed to store hit", error);
     return jsonError("storage_failed", 500);
-  } finally {
-    await client.close();
   }
 
   return NextResponse.json({
