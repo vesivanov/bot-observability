@@ -1,0 +1,10 @@
+# docker compose -f compose.yaml -f compose.external.yaml up --build -d
+services:
+  db:
+    profiles: [unused-local-database]
+  migrate:
+    depends_on: !reset {}
+  app:
+    depends_on:
+      migrate:
+        condition: service_completed_successfully

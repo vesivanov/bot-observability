@@ -1,12 +1,13 @@
+import type { DashboardRange } from "@/lib/period";
 import Link from "next/link";
 import { getDb } from "@/app/dashboard/db";
 import {
   statsCache,
   STATS_CACHE_TTL_MS,
   roundToInterval,
-  resolvePeriodRange,
   formatDateTime,
   eventHref,
+  dashboardHref,
   pct,
   verifiedAccent,
   Panel,
@@ -15,7 +16,6 @@ import {
   StatusCodeChip,
   ConfidenceChip,
   LongRangeCaption,
-  LONG_RANGE_THRESHOLD_DAYS,
 } from "@/app/dashboard/shared";
 import { normalizeBotCategory } from "@/lib/categories";
 import { BotName } from "@/components/bot-name";
@@ -24,11 +24,11 @@ import { DailyTrendChart } from "@/components/charts/daily-trend-chart";
 import { fillDatePeriods } from "@/lib/date-buckets";
 import { BotsTable } from "@/components/bots-table";
 import type { DbClient } from "@/lib/db";
-import type { BotDetail } from "@/lib/schema";
+import type { BotDetail, BotDetailReport } from "@/lib/schema";
 
 async function getBotsData(db: DbClient, period: string, from: Date, to: Date, projectFilter: string | undefined, isLongRange: boolean) {
   const now = roundToInterval(new Date(), STATS_CACHE_TTL_MS);
-  const cacheKey = `bots:${isLongRange ? "rollup" : "raw"}:${period}:${projectFilter ?? ""}:${now.getTime()}`;
+  const cacheKey = `bots:${isLongRange ? "rollup" : "raw"}:${from.toISOString()}:${to.toISOString()}:${projectFilter ?? ""}:${now.getTime()}`;
   const cached = statsCache.get<BotDetail[]>(cacheKey);
   if (cached) return cached;
   const result = isLongRange
@@ -39,12 +39,12 @@ async function getBotsData(db: DbClient, period: string, from: Date, to: Date, p
 }
 
 async function fetchBotActivityData(db: DbClient, from: Date, to: Date, projectFilter?: string, category?: string) {
-  return db.botPeriodCounts({ from, to, granularity: "day", project: projectFilter, category, limit: 12 });
+  return db.botPeriodCounts({ from, to, granularity: "day", project: projectFilter, category });
 }
 
 async function getBotActivityData(db: DbClient, period: string, from: Date, to: Date, projectFilter?: string, category?: string) {
   const now = roundToInterval(new Date(), STATS_CACHE_TTL_MS);
-  const cacheKey = `bot-activity:${period}:${projectFilter ?? ""}:${category ?? ""}:${now.getTime()}`;
+  const cacheKey = `bot-activity:${from.toISOString()}:${to.toISOString()}:${projectFilter ?? ""}:${category ?? ""}:${now.getTime()}`;
   const cached = statsCache.get<Awaited<ReturnType<typeof fetchBotActivityData>>>(cacheKey);
   if (cached) return cached;
   const result = await fetchBotActivityData(db, from, to, projectFilter, category);
@@ -52,22 +52,34 @@ async function getBotActivityData(db: DbClient, period: string, from: Date, to: 
   return result;
 }
 
-async function fetchBotDetailData(db: DbClient, botName: string, from: Date, to: Date, projectFilter?: string) {
-  const [report, pages, rows, activity] = await Promise.all([
-    db.botDetailReport(botName, from, to, projectFilter),
-    db.topPagesForBot(botName, from, to, 8, projectFilter),
-    db.queryFiltered({ botName, project: projectFilter, from, to, limit: 25 }),
-    db.botPeriodCounts({ from, to, granularity: "day", project: projectFilter, botName, limit: 1 }),
+async function fetchBotDetailData(db: DbClient, botName: string, from: Date, to: Date, projectFilter?: string, aggregate = false, category?: string) {
+  const [rawReport, pages, rows, activity] = await Promise.all([
+    db.botDetailReport(botName, from, to, projectFilter, category),
+    db.topPagesForBot(botName, from, to, 8, projectFilter, category),
+    db.queryFiltered({ botName, category, project: projectFilter, from, to, limit: 25 }),
+    db.botPeriodCounts({ from, to, granularity: "day", project: projectFilter, botName, category }),
   ]);
-  return { report, pages, rows, activity };
+  if (aggregate || !rawReport) {
+    const bots = await db.allBotDetailsRollup(from, to, projectFilter);
+    const matches = bots.filter((row) => row.bot_name === botName && (!category || (category === "ai" ? row.bot_category.startsWith("ai_") : row.bot_category === category)));
+    const bot = matches.length ? { ...matches[0], total_hits: matches.reduce((sum, b) => sum + b.total_hits, 0), verified_hits: matches.reduce((sum, b) => sum + b.verified_hits, 0), projects: Array.from(new Set(matches.flatMap((b) => b.projects.split(", ")))).join(", "), last_seen: matches.map((b) => b.last_seen).sort().at(-1)! } : undefined;
+    if (bot) {
+      const report: BotDetailReport = { ...bot, ua_only_hits: bot.total_hits - bot.verified_hits, projects_hit: bot.projects.split(", ").filter(Boolean).length, top_project: "", top_page: "", first_seen: "" };
+      const activity = await db.botDailyRollup(botName, from, to, projectFilter, category);
+      // Do not invent paths or exact timestamps for expired request detail.
+      return { report, pages, rows, activity, approximate: true };
+    }
+  }
+  return { report: rawReport, pages, rows, activity, approximate: false };
+
 }
 
-async function getBotDetailData(db: DbClient, botName: string, period: string, from: Date, to: Date, projectFilter?: string) {
+async function getBotDetailData(db: DbClient, botName: string, period: string, from: Date, to: Date, projectFilter?: string, aggregate = false, category?: string) {
   const now = roundToInterval(new Date(), STATS_CACHE_TTL_MS);
-  const cacheKey = `bot-detail:${botName}:${period}:${projectFilter ?? ""}:${now.getTime()}`;
+  const cacheKey = `bot-detail:${aggregate}:${category ?? ""}:${botName}:${from.toISOString()}:${to.toISOString()}:${projectFilter ?? ""}:${now.getTime()}`;
   const cached = statsCache.get<Awaited<ReturnType<typeof fetchBotDetailData>>>(cacheKey);
   if (cached) return cached;
-  const result = await fetchBotDetailData(db, botName, from, to, projectFilter);
+  const result = await fetchBotDetailData(db, botName, from, to, projectFilter, aggregate, category);
   statsCache.set(cacheKey, result, STATS_CACHE_TTL_MS);
   return result;
 }
@@ -75,25 +87,27 @@ async function getBotDetailData(db: DbClient, botName: string, period: string, f
 async function BotDetailPanel({
   botName,
   period,
-  periodDays,
   from,
   to,
   projectFilter,
+  categoryFilter,
+  aggregate,
 }: {
   botName: string;
   period: string;
-  periodDays: number;
   from: Date;
   to: Date;
   projectFilter?: string;
+  categoryFilter?: string;
+  aggregate: boolean;
 }) {
   const db = getDb();
-  const { report, pages, rows, activity } = await getBotDetailData(db, botName, period, from, to, projectFilter);
+  const { report, pages, rows, activity, approximate } = await getBotDetailData(db, botName, period, from, to, projectFilter, aggregate, categoryFilter);
 
   if (!report) {
     return (
       <div className="space-y-2">
-        <Link href={`/dashboard?view=bots&period=${encodeURIComponent(period)}${projectFilter ? `&project=${projectFilter}` : ""}`} className="text-xs text-neutral-500 hover:text-neutral-300">← All bots</Link>
+        <Link href={dashboardHref({ view: "bots", period, project: projectFilter, category: categoryFilter })} className="text-xs text-neutral-500 hover:text-neutral-300">← All bots</Link>
         <p className="text-sm text-neutral-500">No events found for {botName} in the selected period.</p>
       </div>
     );
@@ -101,20 +115,20 @@ async function BotDetailPanel({
 
   // Zero-fill the per-bot daily series against the same reference end (`to`)
   // views elsewhere use, so custom-range buckets align.
-  const activityByDate = new Map(activity.map((row) => [row.period, row.count]));
-  const activitySeries = fillDatePeriods(periodDays, to).map((date) => ({ date, count: activityByDate.get(date) ?? 0 }));
+  const activityByDate = new Map(activity.map((row) => ["period" in row ? row.period : row.date, row.count]));
+  const activitySeries = fillDatePeriods(from, to).map((date) => ({ date, count: activityByDate.get(date) ?? 0 }));
 
   return (
     <div className="space-y-4">
       <div>
-        <Link href={`/dashboard?view=bots&period=${encodeURIComponent(period)}${projectFilter ? `&project=${projectFilter}` : ""}`} className="text-xs text-neutral-500 hover:text-neutral-300">← All bots</Link>
+        <Link href={dashboardHref({ view: "bots", period, project: projectFilter, category: categoryFilter })} className="text-xs text-neutral-500 hover:text-neutral-300">← All bots</Link>
         <div className="mt-2 flex flex-wrap items-center gap-3">
           <BotName name={report.bot_name} className="text-xl font-semibold tracking-tight text-white" />
           <NormalizedCategoryChip botName={report.bot_name} category={report.bot_category} />
         </div>
         <p className="mt-1 text-sm text-neutral-500">
-          Last seen {formatDateTime(report.last_seen)}
-          {report.first_seen ? <> · First seen {formatDateTime(report.first_seen)}</> : null}
+          {approximate ? "Last selected UTC day" : "Last request in selection"} {approximate ? report.last_seen.slice(0, 10) : formatDateTime(report.last_seen)}
+          {report.first_seen ? <> · Global first seen {formatDateTime(report.first_seen)}</> : null}
         </p>
       </div>
 
@@ -122,18 +136,19 @@ async function BotDetailPanel({
         <StatTile label="Total hits" value={report.total_hits.toLocaleString()} />
         <StatTile label="Verified share" value={`${pct(report.verified_hits, report.total_hits)}%`} detail={`${report.ua_only_hits.toLocaleString()} UA-only hits`} accent={verifiedAccent(pct(report.verified_hits, report.total_hits))} />
         <StatTile label="Projects hit" value={report.projects_hit.toLocaleString()} />
-        <StatTile label="Top project" value={report.top_project || "-"} />
+        <StatTile label="Top project" value={report.top_project || "Unavailable in aggregate detail"} />
       </div>
 
       <Panel title="Activity" eyebrow="daily hits">
         <DailyTrendChart data={activitySeries} />
       </Panel>
 
+      {approximate && <p className="text-sm text-neutral-400">Totals and daily activity use retained aggregates. Paths and request records below show only available raw detail.</p>}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Panel title="Top pages for this bot" eyebrow="paths">
           <div className="space-y-1">
             {pages.map((p) => (
-              <Link key={`${p.project}:${p.path}`} href={eventHref({ project: p.project, bot: botName, path: p.path, period })} className="block rounded border border-neutral-800/90 bg-neutral-950 px-3 py-2 hover:bg-neutral-900/70">
+              <Link key={`${p.project}:${p.path}`} href={eventHref({ project: p.project, bot: botName, path: p.path, category: categoryFilter, period })} className="block rounded border border-neutral-800/90 bg-neutral-950 px-3 py-2 hover:bg-neutral-900/70">
                 <div className="flex items-center justify-between gap-4">
                   <span className="min-w-0">
                     <span className="block truncate font-mono text-sm text-neutral-100">{p.path}</span>
@@ -164,7 +179,7 @@ async function BotDetailPanel({
               ))}
             </div>
           </Panel>
-          <Link href={eventHref({ bot: botName, project: projectFilter, period })} className="mt-3 inline-block text-xs text-neutral-500 hover:text-neutral-300">Open all raw events</Link>
+          <Link href={eventHref({ bot: botName, project: projectFilter, category: categoryFilter, period })} className="mt-3 inline-block text-xs text-neutral-500 hover:text-neutral-300">Open all raw events</Link>
         </section>
       </div>
     </div>
@@ -173,21 +188,21 @@ async function BotDetailPanel({
 
 export async function BotsViewServer({
   period,
-  periodDays,
+  range,
   projectFilter,
   categoryFilter,
   botFilter,
 }: {
   period: string;
   periodDays: number;
+  range: DashboardRange;
   projectFilter?: string;
   categoryFilter?: string;
   botFilter?: string;
 }) {
   const db = getDb();
-  const now = roundToInterval(new Date(), STATS_CACHE_TTL_MS);
-  const { start: from, end: to } = resolvePeriodRange(period, now);
-  const isLongRange = periodDays > LONG_RANGE_THRESHOLD_DAYS;
+  const { start: from, end: to } = range;
+  const isLongRange = range.aggregate;
 
   const [bots, activity] = await Promise.all([
     getBotsData(db, period, from, to, projectFilter, isLongRange),
@@ -204,7 +219,7 @@ export async function BotsViewServer({
     <div className="space-y-4">
       {botFilter && (
         <Panel title={botFilter} eyebrow="bot detail">
-          <BotDetailPanel botName={botFilter} period={period} periodDays={periodDays} from={from} to={to} projectFilter={projectFilter} />
+          <BotDetailPanel botName={botFilter} period={period} from={from} to={to} projectFilter={projectFilter} categoryFilter={categoryFilter} aggregate={isLongRange} />
         </Panel>
       )}
 
@@ -213,7 +228,7 @@ export async function BotsViewServer({
       {!botFilter && !isLongRange && activity && activity.length > 0 && (
         <StackedBotChart
           title="Daily bot hits by bot"
-          periods={fillDatePeriods(periodDays, to)}
+          periods={fillDatePeriods(from, to)}
           rows={activity}
           granularity="day"
         />
@@ -224,7 +239,7 @@ export async function BotsViewServer({
           <p className="text-sm text-neutral-500">No bots detected in this period{categoryFilter ? ` for category "${categoryFilter}"` : ""}.</p>
         </Panel>
       ) : (
-        <BotsTable bots={filteredBots} period={period} projectFilter={projectFilter} />
+        <BotsTable bots={filteredBots} period={period} projectFilter={projectFilter} categoryFilter={categoryFilter} aggregate={isLongRange} />
       )}
     </div>
   );

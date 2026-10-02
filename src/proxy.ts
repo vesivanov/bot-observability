@@ -43,27 +43,10 @@ export function proxy(request: NextRequest) {
     changed = true;
   }
 
-  // Every in-app link/form (navHref, botHref, the Apply form, etc.) always
-  // carries `period`, but deliberately omits `project` when it's "" (All
-  // projects) — that's the existing convention this whole codebase uses for
-  // "no filter". So an absent `project` param can't by itself distinguish
-  // "fresh visit, please restore my last project" from "mid-session
-  // navigation while All projects is the active choice". The Referer header
-  // does distinguish them: only a request that did NOT come from this same
-  // /dashboard page (a bookmark, a new tab, a pasted link, browser restore)
-  // should have cookie values injected here.
-  const referer = request.headers.get("referer");
-  const isInternalNav = (() => {
-    if (!referer) return false;
-    try {
-      const refUrl = new URL(referer);
-      return refUrl.origin === url.origin && refUrl.pathname === url.pathname;
-    } catch {
-      return false;
-    }
-  })();
-
-  if (!isInternalNav) {
+  // Restore preferences only for a bare dashboard visit. Explicit query
+  // selections remain authoritative even behind a proxy/container origin.
+  const bareVisit = searchParams.size === 0;
+  if (bareVisit) {
     const cookieProject = request.cookies.get(PROJECT_COOKIE)?.value;
     if (!searchParams.has("project") && cookieProject !== undefined) {
       searchParams.set("project", cookieProject);
@@ -76,6 +59,9 @@ export function proxy(request: NextRequest) {
     }
   }
 
+  // Next requires an absolute URL here, then makes same-origin redirects
+  // relative in its response adapter. Keep the request origin so a reverse
+  // proxy's internal host never becomes the browser's redirect destination.
   const response = changed ? NextResponse.redirect(url) : NextResponse.next();
 
   // Persist whatever the request ends up carrying so the next bare visit

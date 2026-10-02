@@ -1,14 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { execFileSync } from "child_process";
+import { execFile, execFileSync } from "child_process";
+import { promisify } from "util";
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import postgres from "postgres";
 
 // Integration tests only run when TEST_DATABASE_URL is set — they need a
-// real Postgres database. `npm test` (unit only) never sets it, so these are
-// skipped by default; CI provides a postgres:16 service and sets it before
-// running `npm run test:integration`.
+// real Postgres database. Set TEST_DATABASE_URL to a disposable database,
+// apply migrations first, then run `npm run test:integration`. Without it,
+// these tests skip and do not verify database behavior.
+const execFileAsync = promisify(execFile);
 const url = process.env.TEST_DATABASE_URL;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -51,16 +53,9 @@ describe.skipIf(!url)("migrations", () => {
   });
 });
 
-// The test above only proves migrate.mjs is idempotent — by the time it
-// runs, CI has already applied 002_rollups.sql's one-time backfill
-// (`INSERT INTO bot_hits_daily ... SELECT ... FROM bot_hits ...`) against an
-// empty bot_hits table (see .github/workflows: `npm run migrate` runs before
-// any data exists), so the backfill's actual aggregation logic — grouping by
-// day/project/bot/category/status_class, bucketing status codes into
-// status_class, and excluding heartbeats — has never been exercised against
-// non-empty input by any test. Re-running migrate.mjs against a populated
-// "public" schema wouldn't help either: 002_rollups.sql is already recorded
-// in schema_migrations there, so migrate.mjs would just skip it.
+// The test above proves bookkeeping is idempotent, but a fresh installation
+// normally applies 002 against an empty raw table. That does not exercise
+// aggregation of pre-existing rows. Recorded migrations are never rerun.
 //
 // This suite runs the migration SQL directly (not via migrate.mjs, and not
 // against "public") inside a scratch schema created fresh for this test and
@@ -120,6 +115,50 @@ describe.skipIf(!url)("002_rollups.sql backfill", () => {
     } finally {
       await sql.unsafe(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
       await sql.end();
+    }
+  });
+});
+
+
+describe.skipIf(!url)("already-pruned upgrade and rebuild", () => {
+  it("preserves aggregate-only and partial days through pending 004, rebuilds only an attested interval and remains stable", async () => {
+    const schema = `vitest_preserve_${Date.now()}`;
+    const admin = postgres(url as string, { max: 1 });
+    const scoped = postgres(url as string, { max: 1, connection: { search_path: schema, timezone: "UTC" } });
+    const target = new URL(url as string);
+    target.searchParams.set("search_path", schema);
+    const reconcileScript = join(__dirname, "..", "..", "scripts", "reconcile-rollups.mjs");
+    try {
+      await admin.unsafe(`CREATE SCHEMA "${schema}"`);
+      for (const file of ["001_init.sql", "002_rollups.sql", "003_project_health.sql"]) await scoped.unsafe(readFileSync(join(migrationsDir, file), "utf8"));
+      await scoped`CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ DEFAULT now())`;
+      for (const file of ["001_init.sql", "002_rollups.sql", "003_project_health.sql"]) await scoped`INSERT INTO schema_migrations (name) VALUES (${file})`;
+      await scoped`INSERT INTO bot_hits_daily (day, project_name, bot_name, bot_category, status_class, hits, verified_hits) VALUES
+        ('2026-01-01', 'preserve', 'OlderBot', 'generic', '2xx', 90, 0),
+        ('2026-02-01', 'preserve', 'BoundaryBot', 'generic', '2xx', 100, 0),
+        ('2026-02-02', 'preserve', 'CompleteBot', 'generic', '2xx', 999, 0)`;
+      await scoped`INSERT INTO bot_hits (created_at, project_name, bot_name, bot_category, status_code, sample_rate) VALUES
+        ('2026-02-01T12:00:00Z', 'preserve', 'BoundaryBot', 'generic', 200, 1),
+        ('2026-02-02T12:00:00Z', 'preserve', 'CompleteBot', 'generic', 200, 0.25)`;
+      await execFileAsync("node", [migrateScript, target.toString()]);
+      const totals = async () => (await scoped`SELECT hits FROM bot_hits_daily ORDER BY day`).map((row) => row.hits);
+      expect(await totals()).toEqual([90, 100, 999]);
+      // An unknown legacy pruning interval must never be inferred from MIN(raw).
+      const env = { ...process.env, BOT_INGESTION_PAUSED: "true", RAW_COMPLETE_FROM: "" };
+      await execFileAsync("node", [reconcileScript, target.toString()], { env });
+      expect(await totals()).toEqual([90, 100, 999]);
+      for (let i = 0; i < 2; i++) {
+        const output = await execFileAsync("node", [reconcileScript, target.toString()], { env: { ...env, RAW_COMPLETE_FROM: "2026-02-02" } });
+        expect(output.stdout).toContain("earlier/uncertain history left unchanged");
+        expect(await totals()).toEqual([90, 100, 4]);
+      }
+      const rerun = await execFileAsync("node", [migrateScript, target.toString()]);
+      expect(rerun.stdout).toContain("skipped (already applied): 004_weighted_rollups.sql");
+      expect(await totals()).toEqual([90, 100, 4]);
+    } finally {
+      await scoped.end();
+      await admin.unsafe(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+      await admin.end();
     }
   });
 });

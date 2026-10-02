@@ -65,10 +65,9 @@ const PREVIEW_TOP_BOTS: { name: string; category: string; hits: number }[] = [
   { name: "Googlebot", category: "search_crawler", hits: 2800 },
   { name: "Bingbot", category: "search_crawler", hits: 1600 },
   { name: "PerplexityBot", category: "ai_search", hits: 1400 },
-  { name: "ChatGPT-User", category: "ai_agent", hits: 1100 },
+  { name: "ChatGPT-User", category: "ai_agent", hits: 640 },
   { name: "AhrefsBot", category: "seo_crawler", hits: 1050 },
   { name: "Twitterbot", category: "social_preview", hits: 720 },
-  { name: "UptimeRobot", category: "monitoring", hits: 340 },
 ];
 const PREVIEW_MAX_BOT_HITS = Math.max(...PREVIEW_TOP_BOTS.map((b) => b.hits));
 
@@ -91,9 +90,9 @@ const PREVIEW_EVENTS: { time: string; bot: string; category: string; statusCode:
 ];
 
 const HOW_IT_WORKS = [
-  ["1", "Send events", "Your app POSTs each request's user agent, path, and status code to /api/bot-hit as it's served — from middleware, an edge function, or backend logging code."],
-  ["2", "Bots get identified", "Every event is matched against 130+ known crawler patterns and (where possible) verified via reverse-DNS or IP range, server-side, on the way in."],
-  ["3", "You inspect the traffic", "The dashboard rolls hits up by bot, category, page, and status so you can see who's crawling, what they're reading, and what's breaking."],
+  ["1", "Send events", "Your website sends bot request details to /api/bot-hit. The Next.js request proxy reports an unknown final status; a backend that observes the response can include it."],
+  ["2", "Bots get identified", "Every event is matched against 130+ known crawler patterns and (where possible) checked using forward-confirmed reverse DNS for supported search crawlers, server-side, on the way in."],
+  ["3", "You inspect the traffic", "Review request counts, observed pages and reported outcomes, with links to retained request evidence."],
 ];
 
 const FEATURES = [
@@ -103,19 +102,19 @@ const FEATURES = [
 ];
 
 const DASHBOARD_VIEWS = [
-  ["Overview", "Totals, crawler mix, daily trend, time-of-day distribution, movers, and AI crawls-vs-visits by company."],
+  ["Overview", "Totals, crawler mix, daily trend, time-of-day distribution, movers, and AI crawls and user-triggered fetches by company."],
   ["Bots", "Full bot list with categories, project spread, hit share, and last seen time — includes a per-bot detail view and an AI-only filter."],
   ["Health", "2xx/3xx/4xx/5xx mix, failing paths, and sensitive/API path hits."],
   ["Raw Events", "Filterable event log for individual bot requests and debugging."],
 ];
 
 const INGEST_FIELDS = [
-  ["project", "Groups traffic by product, site, or deployment."],
+  ["project credential", "Assigns traffic to the configured website project."],
   ["url / path", "Identifies which content bots are requesting."],
   ["user_agent", "Drives bot detection and category assignment."],
-  ["ip", "Enables reverse-DNS and CIDR verification when available."],
+  ["ip", "Enables forward-confirmed reverse DNS for Googlebot, Bingbot and Applebot when an original client IP is available."],
   ["status_code", "Separates successful reads from redirects, errors, and uncaptured rows."],
-  ["heartbeat", "Tracks whether the logging pipeline is still alive."],
+  ["heartbeat", "Optional receipt, separate from received bot requests."],
 ];
 
 function GitHubMark({ className }: { className?: string }) {
@@ -157,7 +156,7 @@ export default async function HomePage() {
               View on GitHub
             </a>
             {authed ? (
-              <Link href="/dashboard" className="rounded border border-neutral-800 px-4 py-2 text-sm font-medium text-neutral-300 hover:border-neutral-600 hover:text-neutral-100">
+              <Link href="/dashboard" prefetch={false} className="rounded border border-neutral-800 px-4 py-2 text-sm font-medium text-neutral-300 hover:border-neutral-600 hover:text-neutral-100">
                 Open dashboard
               </Link>
             ) : null}
@@ -217,7 +216,7 @@ export default async function HomePage() {
           <span className="text-[11px] text-neutral-600">Example data — not a live query</span>
         </div>
         <p className="mt-2 max-w-2xl text-xs leading-5 text-neutral-500">
-          Flip through the same tabs the real dashboard has — the numbers below are illustrative, but the panels, colors, and layout are exactly what you&apos;ll see once your own traffic starts flowing in.
+          Explore illustrative examples of the dashboard views. Your own Overview centers on one traffic chart, request summaries and links to evidence, with detailed analysis available on demand.
         </p>
 
         <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -409,12 +408,11 @@ export default async function HomePage() {
         </p>
         <pre className="mt-3 overflow-x-auto rounded border border-neutral-800 bg-neutral-950 p-3 font-mono text-xs leading-6 text-neutral-300">
 {`npm install
-cp .env.example .env        # set DATABASE_URL and the role-specific secrets
-npm run migrate
+npm run setup     # creates .env with secrets + runs migrations
 npm run dev`}
         </pre>
         <p className="mt-3 max-w-2xl text-xs leading-5 text-neutral-500">
-          Open <span className="font-mono text-neutral-300">/dashboard</span> and sign in with your <span className="font-mono text-neutral-300">BOT_ADMIN_TOKEN</span>. Send events with project-scoped <span className="font-mono text-neutral-300">BOT_INGEST_TOKENS</span>. Full setup, deployment, and ingestion docs are in the{" "}
+          Open <span className="font-mono text-neutral-300">/dashboard</span> and sign in with your <span className="font-mono text-neutral-300">BOT_ADMIN_TOKEN</span>. Empty dashboard? Press <span className="font-mono text-neutral-300">Send test hit</span> for one real event, then wire your site with the 10-line sender in the{" "}
           <a href={`${REPO_URL}#readme`} target="_blank" rel="noopener noreferrer" className="text-neutral-300 underline decoration-neutral-700 underline-offset-2 hover:text-white">
             README
           </a>.

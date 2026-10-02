@@ -9,7 +9,7 @@ import type { BotDetail } from "@/lib/schema";
 // Client component: SortableTable's columns carry render closures, which
 // can't cross the server/client boundary as props — so this must be a
 // client component that builds its own column definitions locally.
-export function BotsTable({ bots, period, projectFilter }: { bots: BotDetail[]; period: string; projectFilter?: string }) {
+export function BotsTable({ bots, period, projectFilter, categoryFilter, aggregate = false }: { bots: BotDetail[]; period: string; projectFilter?: string; categoryFilter?: string; aggregate?: boolean }) {
   const totalHits = bots.reduce((sum, bot) => sum + bot.total_hits, 0);
   const maxHits = Math.max(...bots.map((bot) => bot.total_hits), 1);
 
@@ -20,7 +20,7 @@ export function BotsTable({ bots, period, projectFilter }: { bots: BotDetail[]; 
       sortable: true,
       sortAccessor: (b) => b.bot_name.toLowerCase(),
       render: (b) => (
-        <BotName name={b.bot_name} href={botHref({ bot: b.bot_name, project: projectFilter, period })} />
+        <BotName name={b.bot_name} href={botHref({ bot: b.bot_name, project: projectFilter, category: categoryFilter, period })} />
       ),
     },
     {
@@ -65,11 +65,11 @@ export function BotsTable({ bots, period, projectFilter }: { bots: BotDetail[]; 
     },
     {
       key: "lastSeen",
-      label: "Last seen",
+      label: aggregate ? "Last UTC day" : "Last request",
       align: "right",
       sortable: true,
       sortAccessor: (b) => new Date(b.last_seen).getTime(),
-      render: (b) => <span className="text-xs text-neutral-500">{formatDateTime(b.last_seen)}</span>,
+      render: (b) => <span className="text-xs text-neutral-500">{aggregate ? b.last_seen.slice(0, 10) : formatDateTime(b.last_seen)}</span>,
     },
   ];
 

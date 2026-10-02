@@ -18,7 +18,7 @@ export function statusClassOf(statusCode: number): string {
   if (statusCode >= 200 && statusCode < 300) return "2xx";
   if (statusCode >= 300 && statusCode < 400) return "3xx";
   if (statusCode >= 400 && statusCode < 500) return "4xx";
-  if (statusCode >= 500) return "5xx";
+  if (statusCode >= 500 && statusCode < 600) return "5xx";
   return "unknown";
 }
 
@@ -172,6 +172,7 @@ export interface BotStatusBreakdown {
   bot_name: string;
   bot_category: BotCategory;
   total_hits: number;
+  known_status_hits: number;
   error_hits: number;
   ua_only_hits: number;
   top_status_code: number;

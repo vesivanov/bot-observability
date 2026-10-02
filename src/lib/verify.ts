@@ -9,9 +9,6 @@ const VERIFIED_IPS: Map<string, string[]> = new Map([
   ["Googlebot", ["googlebot.com", "google.com"]],
   ["Bingbot", ["search.msn.com"]],
   ["Applebot", ["applebot.apple.com"]],
-  ["Applebot-Extended", ["applebot.apple.com"]],
-  ["ClaudeBot", ["anthropic.com"]],
-  ["GPTBot", ["openai.com"]],
 ]);
 
 // Derived from VERIFIED_IPS so the two can never desync

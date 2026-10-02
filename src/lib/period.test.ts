@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parsePeriod } from "./period";
+import { parsePeriod, resolveDashboardRange } from "./period";
 
 // parsePeriod originally lived in src/app/dashboard/shared.tsx, which also
 // imports next/link and TtlCache. Since parsePeriod itself has no such
@@ -50,4 +50,20 @@ describe("parsePeriod", () => {
     expect(result.preset).toBe(true);
     expect(result.days).toBe(7);
   });
+  it("converts an inclusive single-day picker selection to UTC half-open bounds", () => {
+    const range = parsePeriod("2026-10-01_2026-10-01");
+    expect(range.days).toBe(1);
+    expect(range.start.toISOString()).toBe("2026-10-01T00:00:00.000Z");
+    expect(range.end.toISOString()).toBe("2026-10-02T00:00:00.000Z");
+    expect(parsePeriod("2026-02-30_2026-03-01").preset).toBe(true);
+  });
+
+  it("uses displayed whole UTC days for aggregates without changing raw requested bounds", () => {
+    const range = resolveDashboardRange("365", new Date("2026-10-02T12:00:00Z"));
+    expect(range.aggregate).toBe(true);
+    expect(range.start.toISOString()).toBe("2025-10-02T00:00:00.000Z");
+    expect(range.end.toISOString()).toBe("2026-10-03T00:00:00.000Z");
+    expect(range.requestedStart.toISOString()).toBe("2025-10-02T12:00:00.000Z");
+  });
+
 });

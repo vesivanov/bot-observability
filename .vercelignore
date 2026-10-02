@@ -5,3 +5,5 @@
 coverage
 node_modules
 *.tsbuildinfo
+docs/launch-roadmap.md
+docs/launch-decision-report.html

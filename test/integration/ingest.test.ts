@@ -160,3 +160,26 @@ describe.skipIf(!url)("insertHit", () => {
     }
   });
 });
+
+describe.skipIf(!url)("connection receipts", () => {
+  it("keeps collector checks separate from website delivery and analytics", async () => {
+    const project = "__vitest_receipt__";
+    const client = createDbClient(url as string);
+    const sql = postgres(url as string, { max: 1 });
+    try {
+      await client.recordConnectionReceipt(project, "collector");
+      expect(await client.projectDelivery(project)).toMatchObject({ delivered: false, lastProbe: null });
+      await client.recordConnectionReceipt(project, "probe");
+      expect(await client.projectDelivery(project)).toMatchObject({ delivered: true });
+      expect((await sql`SELECT COUNT(*)::int AS count FROM bot_hits WHERE project_name = ${project}`)[0].count).toBe(0);
+      expect((await sql`SELECT COUNT(*)::int AS count FROM bot_hits_daily WHERE project_name = ${project}`)[0].count).toBe(0);
+      const legacyProject = "__vitest_legacy_delivery__";
+      await sql`INSERT INTO bot_hits_daily (day, project_name, bot_name, bot_category, status_class, hits) VALUES ('2020-01-01', ${legacyProject}, 'LegacyBot', 'generic', 'unknown', 100)`;
+      expect(await client.projectDelivery(legacyProject)).toMatchObject({ delivered: true, lastProbe: null });
+    } finally {
+      await sql`DELETE FROM project_receipts WHERE project_name = ${project}`;
+      await sql`DELETE FROM bot_hits_daily WHERE project_name = '__vitest_legacy_delivery__'`;
+      await client.close(); await sql.end();
+    }
+  });
+});

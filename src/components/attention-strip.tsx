@@ -10,14 +10,16 @@ export function AttentionStrip({
   trendPercent,
   period,
   project,
+  category,
 }: {
   current: PeriodStats;
   previous: PeriodStats | null;
   trendPercent: number | null;
   period: string;
   project?: string;
+  category?: string;
 }) {
-  const findings = buildAttentionFindings({ current, previous, trendPercent, period, project });
+  const findings = buildAttentionFindings({ current, previous, trendPercent, period, project, category });
   if (findings.length === 0) return null;
 
   return (

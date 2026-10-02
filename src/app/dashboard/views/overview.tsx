@@ -1,14 +1,13 @@
+import type { DashboardRange } from "@/lib/period";
 import { getDb } from "@/app/dashboard/db";
+import { EmptyTrafficState } from "@/components/empty-traffic-state";
 import {
   statsCache,
   metaCache,
   STATS_CACHE_TTL_MS,
   META_CACHE_TTL_MS,
   roundToInterval,
-  resolvePeriodRange,
-  addDays,
   getMeta,
-  LONG_RANGE_THRESHOLD_DAYS,
 } from "@/app/dashboard/shared";
 import { OverviewView } from "@/components/overview-view";
 import type { DbClient } from "@/lib/db";
@@ -38,7 +37,7 @@ async function fetchOverviewExtras(db: DbClient, params: {
   project?: string;
   category?: string;
 }) {
-  const [botMovers, pageMovers, projectMovers, hourlyData] = await Promise.all([
+  const [botMovers, pageMovers, projectMovers, hourlyData, chronologicalHours] = await Promise.all([
     db.movers({
       dimension: "bot",
       currentFrom: params.periodStart,
@@ -70,8 +69,9 @@ async function fetchOverviewExtras(db: DbClient, params: {
       limit: 5,
     }),
     db.hourlyCounts(params.periodStart, params.periodEnd, params.project, params.category),
+    params.periodEnd.getTime() - params.periodStart.getTime() <= 86_400_000 ? db.chronologicalHourlyCounts(params.periodStart, params.periodEnd, params.project, params.category) : Promise.resolve([]),
   ]);
-  return { botMovers, pageMovers, projectMovers, hourlyData };
+  return { botMovers, pageMovers, projectMovers, hourlyData, chronologicalHours };
 }
 
 async function getOverviewExtras(db: DbClient, params: {
@@ -97,30 +97,29 @@ async function getOverviewExtras(db: DbClient, params: {
 export async function OverviewViewServer({
   period,
   periodDays,
+  range,
   projectFilter,
   categoryFilter,
 }: {
   period: string;
   periodDays: number;
+  range: DashboardRange;
   projectFilter?: string;
   categoryFilter?: string;
 }) {
   const db = getDb();
   const now = roundToInterval(new Date(), STATS_CACHE_TTL_MS);
-  const { start: periodStart, end: periodEnd } = resolvePeriodRange(period, now);
-  const previousPeriodStart = addDays(periodStart, -periodDays);
-  const isLongRange = periodDays > LONG_RANGE_THRESHOLD_DAYS;
+  const { start: periodStart, end: periodEnd } = range;
+  const previousPeriodStart = new Date(periodStart.getTime() - (periodEnd.getTime() - periodStart.getTime()));
+  const isLongRange = range.aggregate;
 
   if (isLongRange) {
     // Long-range mode: the rollup grain (bot_hits_daily) can't serve
     // path-level panels (top pages, movers, hourly distribution) or exact
     // new-bot detection — OverviewView hides those and shows a caption.
-    // fetchRollupStats buckets by UTC calendar day with both bounds
-    // inclusive, so passing `periodStart` as both the current window's lower
-    // bound and the previous window's upper bound would double-count that
-    // calendar day. Back the previous window's upper bound off by one day so
-    // the two windows partition the rollup's day granularity without overlap.
-    const previousRollupEnd = addDays(periodStart, -1);
+    // The rollup reader converts the shared half-open bounds to UTC days.
+    // The previous interval ends exactly where the selected interval starts.
+    const previousRollupEnd = periodStart;
     const [currentRollup, previousRollup, meta] = await Promise.all([
       getRollupStats(db, periodStart, periodEnd, projectFilter, categoryFilter),
       getRollupStats(db, previousPeriodStart, previousRollupEnd, projectFilter, categoryFilter),
@@ -130,28 +129,58 @@ export async function OverviewViewServer({
     const prevTotal = previousRollup.total;
     const trendPercent = prevTotal > 0 ? ((currentRollup.total - prevTotal) / prevTotal) * 100 : null;
 
+    const stats = {
+      total: currentRollup.total,
+      errorHits: currentRollup.errorHits,
+      knownStatusHits: currentRollup.knownStatusHits,
+      categories: currentRollup.categories,
+      topBotsWithConfidence: currentRollup.topBots,
+      aiBotsWithConfidence: currentRollup.aiBotsWithConfidence,
+      aiBotsAllWithConfidence: currentRollup.aiBotsAllWithConfidence,
+      newBots: [],
+      topPagesByProject: undefined,
+    };
+    const previousStats = {
+      total: previousRollup.total,
+      errorHits: previousRollup.errorHits,
+      knownStatusHits: previousRollup.knownStatusHits,
+      categories: previousRollup.categories,
+      topBotsWithConfidence: previousRollup.topBots,
+      aiBotsWithConfidence: [],
+      newBots: [],
+    };
+
+    if (currentRollup.total === 0) {
+      return (
+        <div className="space-y-5">
+          <EmptyTrafficState project={projectFilter} />
+          <OverviewView
+            stats={stats}
+            previousStats={previousStats}
+            dailyTrend={currentRollup.dailyTrend}
+            dailyCategoryTrend={currentRollup.dailyCategoryTrend}
+            hourlyData={[]}
+            trendPercent={trendPercent}
+            period={period}
+            periodDays={periodDays}
+            projectFilter={projectFilter}
+            categoryFilter={categoryFilter}
+            latestHeartbeat={meta.latestHeartbeat}
+            latestEvent={meta.latestEvent}
+            rangeStart={periodStart}
+            rangeEnd={periodEnd}
+            referenceTime={now}
+            movers={{ bots: [], pages: [], projects: [] }}
+            isLongRange
+          />
+        </div>
+      );
+    }
+
     return (
       <OverviewView
-        stats={{
-          total: currentRollup.total,
-          errorHits: currentRollup.errorHits,
-          knownStatusHits: currentRollup.knownStatusHits,
-          categories: currentRollup.categories,
-          topBotsWithConfidence: currentRollup.topBots,
-          aiBotsWithConfidence: currentRollup.aiBotsWithConfidence,
-          aiBotsAllWithConfidence: currentRollup.aiBotsAllWithConfidence,
-          newBots: [],
-          topPagesByProject: undefined,
-        }}
-        previousStats={{
-          total: previousRollup.total,
-          errorHits: previousRollup.errorHits,
-          knownStatusHits: previousRollup.knownStatusHits,
-          categories: previousRollup.categories,
-          topBotsWithConfidence: previousRollup.topBots,
-          aiBotsWithConfidence: [],
-          newBots: [],
-        }}
+        stats={stats}
+        previousStats={previousStats}
         dailyTrend={currentRollup.dailyTrend}
         dailyCategoryTrend={currentRollup.dailyCategoryTrend}
         hourlyData={[]}
@@ -162,7 +191,9 @@ export async function OverviewViewServer({
         categoryFilter={categoryFilter}
         latestHeartbeat={meta.latestHeartbeat}
         latestEvent={meta.latestEvent}
-        referenceTime={periodEnd}
+        rangeStart={periodStart}
+        rangeEnd={periodEnd}
+        referenceTime={now}
         movers={{ bots: [], pages: [], projects: [] }}
         isLongRange
       />
@@ -179,6 +210,34 @@ export async function OverviewViewServer({
   const prevTotal = previousStats.total;
   const trendPercent = prevTotal > 0 ? ((currentStats.total - prevTotal) / prevTotal) * 100 : null;
 
+  if (currentStats.total === 0) {
+    return (
+      <div className="space-y-5">
+        <EmptyTrafficState project={projectFilter} />
+        <OverviewView
+          stats={currentStats}
+          previousStats={previousStats}
+          dailyTrend={currentStats.dailyTrend}
+          dailyCategoryTrend={currentStats.dailyCategoryTrend}
+          hourlyData={extras.hourlyData}
+          chronologicalHours={extras.chronologicalHours}
+          trendPercent={trendPercent}
+          period={period}
+          periodDays={periodDays}
+          projectFilter={projectFilter}
+          categoryFilter={categoryFilter}
+          latestHeartbeat={meta.latestHeartbeat}
+          latestEvent={meta.latestEvent}
+          rangeStart={periodStart}
+          rangeEnd={periodEnd}
+          referenceTime={now}
+          movers={{ bots: extras.botMovers, pages: extras.pageMovers, projects: extras.projectMovers }}
+          isLongRange={false}
+        />
+      </div>
+    );
+  }
+
   return (
     <OverviewView
       stats={currentStats}
@@ -186,6 +245,7 @@ export async function OverviewViewServer({
       dailyTrend={currentStats.dailyTrend}
       dailyCategoryTrend={currentStats.dailyCategoryTrend}
       hourlyData={extras.hourlyData}
+          chronologicalHours={extras.chronologicalHours}
       trendPercent={trendPercent}
       period={period}
       periodDays={periodDays}
@@ -193,7 +253,9 @@ export async function OverviewViewServer({
       categoryFilter={categoryFilter}
       latestHeartbeat={meta.latestHeartbeat}
       latestEvent={meta.latestEvent}
-      referenceTime={periodEnd}
+      rangeStart={periodStart}
+      rangeEnd={periodEnd}
+      referenceTime={now}
       movers={{ bots: extras.botMovers, pages: extras.pageMovers, projects: extras.projectMovers }}
       isLongRange={false}
     />

@@ -11,15 +11,11 @@ function dateKey(date: Date) {
 // setters (setHours/setDate) — on a Node process running behind UTC (e.g.
 // America/*), a local-time midnight is still "yesterday" in UTC, which used
 // to silently drop the most recent day from per-bot charts.
-export function fillDatePeriods(periodDays: number, referenceTime: Date): string[] {
-  const endUtcMidnight = Date.UTC(
-    referenceTime.getUTCFullYear(),
-    referenceTime.getUTCMonth(),
-    referenceTime.getUTCDate()
-  );
-  const startUtcMidnight = endUtcMidnight - Math.max(periodDays - 1, 0) * 86_400_000;
-
-  return Array.from({ length: periodDays }, (_, index) => {
-    return dateKey(new Date(startUtcMidnight + index * 86_400_000));
-  });
+export function fillDatePeriods(startOrDays: Date | number, end: Date): string[] {
+  const start = typeof startOrDays === "number" ? new Date(end.getTime() - startOrDays * 86_400_000) : startOrDays;
+  if (start >= end) return [];
+  const first = Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate());
+  const lastIncluded = new Date(end.getTime() - 1);
+  const last = Date.UTC(lastIncluded.getUTCFullYear(), lastIncluded.getUTCMonth(), lastIncluded.getUTCDate());
+  return Array.from({ length: (last - first) / 86_400_000 + 1 }, (_, index) => dateKey(new Date(first + index * 86_400_000)));
 }

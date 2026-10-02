@@ -1,9 +1,13 @@
+import { QueryForm } from "@/components/query-form";
+import { ConnectionPanel } from "@/components/connection-panel";
 import { Suspense } from "react";
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { getDb } from "@/app/dashboard/db";
 import {
   parsePeriod,
+  dashboardHref,
+  readDashboardQuery,
   periodDescription,
   formatDateTime,
   getMeta,
@@ -22,6 +26,7 @@ import {
   isStrongSecret,
   SESSION_COOKIE_NAME,
 } from "@/lib/auth";
+import { resolveDashboardRange, roundToInterval } from "@/lib/period";
 import { LEGEND_GROUPS } from "@/lib/bot-legend";
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -35,24 +40,21 @@ const NAV_LINKS = [
 
 const KNOWN_VIEWS = new Set(NAV_LINKS.map((l) => l.key));
 
-function navHref(view: string, period: string, projectFilter: string, categoryFilter: string) {
-  const query = new URLSearchParams({ view, period });
-  if (projectFilter) query.set("project", projectFilter);
-  if (categoryFilter) query.set("category", categoryFilter);
-  return `/dashboard?${query.toString()}`;
+function ProjectSelect({ selected, projects = [] }: { selected: string; projects?: string[] }) {
+  return (
+    <label className="grid gap-1">
+      <span className="text-xs font-medium uppercase tracking-wider text-neutral-400">Project</span>
+      <select key={selected} name="project" defaultValue={selected} className="min-h-8 max-w-48 rounded border border-neutral-800 bg-neutral-950 px-2 text-xs text-neutral-100 outline-none focus:border-amber-600/70">
+        <option value="">All projects</option>
+        {Array.from(new Set([selected, ...projects])).filter(Boolean).map((p) => <option key={p} value={p}>{p}</option>)}
+      </select>
+    </label>
+  );
 }
 
-async function ProjectOptions() {
-  const db = getDb();
-  const meta = await getMeta(db, undefined);
-  return (
-    <>
-      <option value="">All projects</option>
-      {meta.allProjects.map((p) => (
-        <option key={p} value={p}>{p}</option>
-      ))}
-    </>
-  );
+async function ProjectSelector({ selected }: { selected: string }) {
+  const meta = await getMeta(getDb(), undefined);
+  return <ProjectSelect selected={selected} projects={meta.allProjects} />;
 }
 
 async function LatestEventLabel({ projectFilter }: { projectFilter: string }) {
@@ -114,6 +116,8 @@ export default async function DashboardPage({
   const parsedPeriod = parsePeriod(sp.period);
   const period = parsedPeriod.raw;
   const periodDays = parsedPeriod.days;
+  const metadata = await getMeta(getDb(), projectFilter || undefined);
+  const range = resolveDashboardRange(period, roundToInterval(new Date(), 30_000), metadata.rawDetailFrom);
 
   // Legacy view redirects run in src/proxy.ts, ahead of this render — see the
   // comment there for why. This is a defensive fallback only, in case a
@@ -121,6 +125,9 @@ export default async function DashboardPage({
   const view = KNOWN_VIEWS.has(rawView) ? rawView : "overview";
   const categoryFilter = (sp.category as string) ?? "";
   const botFilter = (sp.bot as string) ?? "";
+
+  const context = { ...readDashboardQuery(sp), view };
+  const pathFilter = view === "events" ? context.path : undefined;
 
   const viewCacheKey = JSON.stringify({ view, period, projectFilter, categoryFilter, botFilter, offset: sp.offset ?? "", limit: sp.limit ?? "", path: sp.path ?? "" });
 
@@ -136,34 +143,27 @@ export default async function DashboardPage({
               </form>
             </div>
             <p className="mt-1 text-xs text-neutral-500">
-              {projectFilter ? `Filtered to ${projectFilter}` : "All projects"} · {periodDescription(periodDays)} ·{" "}
+              {projectFilter ? `Filtered to ${projectFilter}` : "All projects"} · {range.aggregate ? "Daily aggregates" : range.preset ? periodDescription(periodDays) : "Custom UTC range"} · {formatDateTime(range.start)} → {range.aggregate ? formatDateTime(new Date(range.end.getTime() - 1)) : `before ${formatDateTime(range.end)}`} ·{" "}
               <Suspense fallback="Latest event…">
                 <LatestEventLabel projectFilter={projectFilter} />
               </Suspense>
             </p>
           </div>
-          <form method="GET" action="/dashboard" className="flex flex-wrap items-end gap-2">
+          <QueryForm key={viewCacheKey} context={context} className="flex flex-wrap items-end gap-2">
             <input type="hidden" name="view" value={view} />
             {categoryFilter && <input type="hidden" name="category" value={categoryFilter} />}
-            {botFilter && <input type="hidden" name="bot" value={botFilter} />}
+            {(view === "bots" || view === "events") && botFilter && <input type="hidden" name="bot" value={botFilter} />}
+            {pathFilter && <input type="hidden" name="path" value={pathFilter} />}
+            {view === "events" && <input type="hidden" name="limit" value={context.limit} />}
             {view === "overview" && typeof sp.trend === "string" && <input type="hidden" name="trend" value={sp.trend} />}
             {view === "overview" && typeof sp.cats === "string" && <input type="hidden" name="cats" value={sp.cats} />}
             {view === "overview" && typeof sp.gran === "string" && <input type="hidden" name="gran" value={sp.gran} />}
-            <PeriodPicker currentPeriod={period} />
-            <label className="grid gap-1">
-              <span className="text-[10px] font-medium uppercase tracking-wider text-neutral-600">Project</span>
-              <select
-                name="project"
-                defaultValue={projectFilter}
-                className="min-h-8 max-w-48 rounded border border-neutral-800 bg-neutral-950 px-2 text-xs text-neutral-100 outline-none focus:border-amber-600/70"
-              >
-                <Suspense fallback={<option value="">All projects</option>}>
-                  <ProjectOptions />
-                </Suspense>
-              </select>
-            </label>
+            <PeriodPicker key={period} currentPeriod={period} />
+            <Suspense fallback={<ProjectSelect selected={projectFilter} />}>
+              <ProjectSelector selected={projectFilter} />
+            </Suspense>
             <button type="submit" className="min-h-8 rounded border border-amber-700/45 bg-amber-950/20 px-3 text-xs font-medium text-amber-100 hover:bg-amber-900/30">Apply</button>
-          </form>
+          </QueryForm>
         </div>
 
         <div className="overflow-x-auto border-b border-neutral-800">
@@ -171,7 +171,7 @@ export default async function DashboardPage({
             {NAV_LINKS.map((l) => (
               <Link
                 key={l.key}
-                href={navHref(l.key, period, projectFilter, categoryFilter)}
+                href={dashboardHref(context, { view: l.key })}
                 className={`border-b-2 px-3 py-2 text-xs font-medium transition-colors sm:px-4 ${
                   view === l.key
                     ? "border-amber-300 text-amber-100"
@@ -189,17 +189,17 @@ export default async function DashboardPage({
           // legacy internal bucket that isn't worth surfacing as its own
           // user-facing chip (it overlaps confusingly with "All AI" /
           // "AI training" for the same activity). Neither gets a chip.
-          const visibleCategories = CATEGORY_ORDER.filter((c) => c !== "unknown" && c !== "ai_crawler");
+          const visibleCategories = CATEGORY_ORDER.filter((c) => c !== "ai_crawler" || categoryFilter === c);
           // If a deep link points at a category with no rendered chip (e.g.
           // ?category=unknown or ?category=ai_crawler), fall back to
           // highlighting "All" so the user isn't left with nothing active.
-          const categoryFilterHasChip = categoryFilter === "ai" || visibleCategories.some((c) => c === categoryFilter);
-          const allActive = !categoryFilter || !categoryFilterHasChip;
+
+          const allActive = !categoryFilter;
           return (
             <div className="mt-2 flex flex-wrap gap-1.5">
               <Link
-                href={navHref(view, period, projectFilter, "")}
-                className={`inline-flex items-center gap-1.5 rounded border px-2 py-1 text-[10px] font-medium transition-colors ${
+                href={dashboardHref(context, { category: undefined })}
+                className={`inline-flex items-center gap-1.5 rounded border px-2 py-1 text-xs font-medium transition-colors ${
                   allActive
                     ? "border-neutral-600 bg-neutral-800 text-neutral-100"
                     : "border-neutral-800 bg-neutral-950 text-neutral-500 hover:text-neutral-300"
@@ -208,8 +208,8 @@ export default async function DashboardPage({
                 All
               </Link>
               <Link
-                href={navHref(view, period, projectFilter, "ai")}
-                className={`inline-flex items-center gap-1.5 rounded border px-2 py-1 text-[10px] font-medium transition-colors ${
+                href={dashboardHref(context, { category: "ai" })}
+                className={`inline-flex items-center gap-1.5 rounded border px-2 py-1 text-xs font-medium transition-colors ${
                   categoryFilter === "ai"
                     ? "border-neutral-600 bg-neutral-800 text-neutral-100"
                     : "border-neutral-800 bg-neutral-950 text-neutral-500 hover:text-neutral-300"
@@ -224,8 +224,8 @@ export default async function DashboardPage({
                 return (
                   <Link
                     key={cat}
-                    href={navHref(view, period, projectFilter, cat)}
-                    className={`inline-flex items-center gap-1.5 rounded border px-2 py-1 text-[10px] font-medium transition-colors ${
+                    href={dashboardHref(context, { category: cat })}
+                    className={`inline-flex items-center gap-1.5 rounded border px-2 py-1 text-xs font-medium transition-colors ${
                       active
                         ? "border-neutral-600 bg-neutral-800 text-neutral-100"
                         : "border-neutral-800 bg-neutral-950 text-neutral-500 hover:text-neutral-300"
@@ -240,23 +240,25 @@ export default async function DashboardPage({
           );
         })()}
 
-        <ActiveFilterChips view={view} period={period} project={projectFilter || undefined} bot={botFilter || undefined} category={categoryFilter || undefined} />
+        <ActiveFilterChips {...context} bot={view === "bots" || view === "events" ? botFilter : undefined} path={pathFilter} />
       </div>
 
       <Suspense key={viewCacheKey} fallback={<ViewSkeleton view={view} />}>
         {view === "overview" && (
-          <OverviewViewServer period={period} periodDays={periodDays} projectFilter={projectFilter || undefined} categoryFilter={categoryFilter || undefined} />
+          <OverviewViewServer period={period} periodDays={periodDays} range={range} projectFilter={projectFilter || undefined} categoryFilter={categoryFilter || undefined} />
         )}
         {view === "bots" && (
-          <BotsViewServer period={period} periodDays={periodDays} projectFilter={projectFilter || undefined} categoryFilter={categoryFilter || undefined} botFilter={botFilter || undefined} />
+          <BotsViewServer period={period} periodDays={periodDays} range={range} projectFilter={projectFilter || undefined} categoryFilter={categoryFilter || undefined} botFilter={botFilter || undefined} />
         )}
         {view === "health" && (
-          <HealthViewServer period={period} periodDays={periodDays} projectFilter={projectFilter || undefined} categoryFilter={categoryFilter || undefined} />
+          <HealthViewServer period={period} periodDays={periodDays} range={range} projectFilter={projectFilter || undefined} categoryFilter={categoryFilter || undefined} />
         )}
         {view === "events" && (
-          <EventsViewServer searchParams={sp} />
+          <EventsViewServer searchParams={sp} range={range} />
         )}
       </Suspense>
+
+      <details className="mt-8 rounded border border-neutral-800 p-4"><summary className="cursor-pointer text-sm text-neutral-300">Website connection{projectFilter ? ` · ${projectFilter}` : ""}</summary><div className="mt-4"><ConnectionPanel project={projectFilter || undefined} /></div></details>
 
       <details className="mt-12 border-t border-neutral-800 pt-4 group">
         <summary className="text-xs text-neutral-500 cursor-pointer hover:text-neutral-300 select-none">
@@ -267,15 +269,15 @@ export default async function DashboardPage({
             <div key={g.label} className="bg-neutral-900 border border-neutral-800 rounded-lg p-3">
               <div className="flex items-baseline gap-2 mb-1">
                 <span className={`text-xs font-semibold uppercase tracking-wider ${g.color}`}>{g.label}</span>
-                <span className="text-[10px] text-neutral-600">{g.description}</span>
+                <span className="text-xs text-neutral-400">{g.description}</span>
               </div>
-              <p className="text-[10px] text-neutral-500 italic mb-2">{g.impact}</p>
+              <p className="text-xs text-neutral-500 italic mb-2">{g.impact}</p>
               <div className="flex flex-col gap-y-1">
                 {g.subs.map(s => (
-                  <div key={s.label} className="text-[11px] leading-relaxed">
+                  <div key={s.label} className="text-xs leading-relaxed">
                     <span className="text-neutral-500 font-medium">{s.label}:</span>{' '}
                     <span className="text-neutral-400">{s.examples}</span>
-                    <span className="text-neutral-600"> — {s.what}</span>
+                    <span className="text-neutral-400"> — {s.what}</span>
                   </div>
                 ))}
               </div>

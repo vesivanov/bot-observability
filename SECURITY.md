@@ -8,11 +8,7 @@ This project is maintained from the `main` branch.
 
 Please do not open a public issue for a security vulnerability.
 
-**Primary channel**: use GitHub's private vulnerability reporting. Go to this repository's **Security** tab → **"Report a vulnerability"** to open a private advisory with the maintainer. This is the preferred and fastest way to reach us.
-
-<!-- maintainer: add a contact email here if you want one -->
-
-If the Security tab / private reporting is not enabled on this repository for any reason, please still avoid public issues — check back later or watch the repository for the feature to be enabled.
+Use [GitHub private vulnerability reporting](https://github.com/vesivanov/bot-observability/security/advisories/new). This repository's private reporting was verified enabled on October 2, 2026. Reports reach the maintainer without a public issue.
 
 Include:
 
@@ -28,5 +24,8 @@ Include:
 - Rotate secrets before making a previously private deployment public.
 - Submitted IP addresses are verified in memory and then stored only as keyed HMAC-SHA-256 values derived from `BOT_IP_HASH_SECRET`; raw IP storage is not supported.
 - The dashboard uses a signed, HTTP-only 1-year session cookie, not multi-user authentication.
-- `BOT_ADMIN_TOKEN` authenticates dashboard login, while `BOT_INGEST_TOKENS` contains project-scoped ingestion keys. Keep all of them server-side and do not expose them in browser code.
+- `BOT_ADMIN_TOKEN` authenticates dashboard login, while `BOT_INGEST_TOKENS` contains project-scoped ingestion keys. Keep website credentials in server-only environment variables. The authenticated operator connection panel deliberately reveals the selected project key; do not share that panel or the administrator session.
 - `BOT_LOG_TOKEN` is a temporary migration fallback only; remove it after all senders use project-scoped ingestion keys and the dashboard uses `BOT_ADMIN_TOKEN`.
+
+- Query values are stripped on future ingestion by default; an explicit query-key allowlist is available. Historical records are not rewritten.
+- Supported DNS verification uses Google DNS-over-HTTPS and sends the original client IP to that resolver before hashing. Only Googlebot, Bingbot and Applebot are checked; no published-IP/CIDR verification is implemented.

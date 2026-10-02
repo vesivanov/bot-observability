@@ -14,16 +14,18 @@ export function StatusBreakdownToggle({
   pageStatusCodes,
   period,
   projectFilter,
+  categoryFilter,
 }: {
   projectStatuses: ProjectStatusBreakdown[];
   botStatusCodes: BotStatusCodeCount[];
   pageStatusCodes: PageStatusCodeCount[];
   period: string;
   projectFilter?: string;
+  categoryFilter?: string;
 }) {
   const [mode, setMode] = useState<Mode>("project");
-  const linkToBotHref = (botName: string) => botHref({ bot: botName, project: projectFilter, period });
-  const linkToEventHref = (params: { project?: string; path?: string }) => eventHref({ ...params, period });
+  const linkToBotHref = (botName: string) => botHref({ bot: botName, project: projectFilter, category: categoryFilter, period });
+  const linkToEventHref = (params: { project?: string; path?: string }) => eventHref({ project: projectFilter, ...params, category: categoryFilter, period });
 
   return (
     <div>

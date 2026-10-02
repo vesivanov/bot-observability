@@ -3,7 +3,7 @@
 // ai_agent (the categories normalizeBotCategory ever maps legacy ai_crawler
 // rows into — see src/lib/categories.ts AI_SEARCH_BOTS/AI_AGENT_BOTS, both
 // of which are subsets of the AI names below). Used by the "AI crawls vs.
-// visits" overview panel to group per-bot hits by company.
+// user-triggered fetches" overview panel to group per-bot hits by company.
 export const BOT_COMPANY: Record<string, string> = {
   // OpenAI
   GPTBot: "OpenAI",
