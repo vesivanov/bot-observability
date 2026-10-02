@@ -17,33 +17,44 @@ describe("proxy — legacy view redirects", () => {
 
   it("redirects trends/pages to overview", () => {
     const res = proxy(makeRequest("/dashboard?view=trends"));
-    expect(new URL(res.headers.get("location")!).searchParams.get("view")).toBe("overview");
+    expect(new URL(res.headers.get("location")!, "https://example.com").searchParams.get("view")).toBe("overview");
   });
 
   it("redirects ai to bots + category=ai", () => {
     const res = proxy(makeRequest("/dashboard?view=ai"));
-    const location = new URL(res.headers.get("location")!);
+    const location = new URL(res.headers.get("location")!, "https://example.com");
     expect(location.searchParams.get("view")).toBe("bots");
     expect(location.searchParams.get("category")).toBe("ai");
   });
 
   it("redirects an unknown view to overview", () => {
     const res = proxy(makeRequest("/dashboard?view=nonsense"));
-    expect(new URL(res.headers.get("location")!).searchParams.get("view")).toBe("overview");
+    expect(new URL(res.headers.get("location")!, "https://example.com").searchParams.get("view")).toBe("overview");
   });
 
   it("redirects status to health", () => {
     const res = proxy(makeRequest("/dashboard?view=status"));
-    expect(new URL(res.headers.get("location")!).searchParams.get("view")).toBe("health");
+    expect(new URL(res.headers.get("location")!, "https://example.com").searchParams.get("view")).toBe("health");
   });
 
   it("redirects the singular bot to bots", () => {
     const res = proxy(makeRequest("/dashboard?view=bot"));
-    expect(new URL(res.headers.get("location")!).searchParams.get("view")).toBe("bots");
+    expect(new URL(res.headers.get("location")!, "https://example.com").searchParams.get("view")).toBe("bots");
   });
 });
 
 describe("proxy — remembering last project/period", () => {
+  it("keeps redirects on the request origin for Next's relative-redirect adapter", () => {
+    const req = new NextRequest("http://0.0.0.0:3000/dashboard", { headers: { cookie: "dash_project=acme; dash_period=30", "x-forwarded-host": "untrusted.example" } });
+    const res = proxy(req);
+    expect(new URL(res.headers.get("location")!).origin).toBe(req.nextUrl.origin);
+  });
+  it("keeps an explicit All-projects scope behind a container origin", () => {
+    const req = new NextRequest("http://0.0.0.0:3000/dashboard?view=events&period=7", { headers: { cookie: "dash_project=acme; dash_period=30", referer: "http://localhost:3150/dashboard" } });
+    const res = proxy(req);
+    expect(res.status).not.toBe(307);
+    expect(res.cookies.get("dash_project")).toBeUndefined();
+  });
   it("does nothing on a first-ever bare visit with no cookies", () => {
     const res = proxy(makeRequest("/dashboard"));
     expect(res.status).not.toBe(307);
@@ -53,7 +64,7 @@ describe("proxy — remembering last project/period", () => {
 
   it("restores remembered project/period on a bare visit with no referer", () => {
     const res = proxy(makeRequest("/dashboard", { cookie: "dash_project=acme; dash_period=30" }));
-    const location = new URL(res.headers.get("location")!);
+    const location = new URL(res.headers.get("location")!, "https://example.com");
     expect(location.searchParams.get("project")).toBe("acme");
     expect(location.searchParams.get("period")).toBe("30");
   });
@@ -62,7 +73,7 @@ describe("proxy — remembering last project/period", () => {
     const res = proxy(
       makeRequest("/dashboard", { cookie: "dash_project=acme; dash_period=30", referer: "https://slack.com/x" })
     );
-    const location = new URL(res.headers.get("location")!);
+    const location = new URL(res.headers.get("location")!, "https://example.com");
     expect(location.searchParams.get("project")).toBe("acme");
     expect(location.searchParams.get("period")).toBe("30");
   });
@@ -107,7 +118,7 @@ describe("proxy — remembering last project/period", () => {
     const res = proxy(
       makeRequest("/dashboard", { cookie: "dash_project=acme; dash_period=30", referer: "not a url" })
     );
-    const location = new URL(res.headers.get("location")!);
+    const location = new URL(res.headers.get("location")!, "https://example.com");
     expect(location.searchParams.get("project")).toBe("acme");
   });
 });

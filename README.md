@@ -1,300 +1,124 @@
 # Bot Observability
 
-![CI](https://github.com/vesivanov/bot-observability/actions/workflows/ci.yml/badge.svg)
+See which bots request your pages, their response outcomes, and whether your website sender is delivering data.
 
-Open-source, self-hosted analytics for AI crawlers, search engines, SEO tools, and automated agents.
+Free, open-source software under the [MIT license](LICENSE). Self-host with Next.js and PostgreSQL; you pay for your own hosting. The dashboard measures HTTP requests, not people, visits, citations or referrals. Bot identities come from user-agent classification and can be spoofed; verification coverage is limited.
 
-See who is crawling your websites, which URLs they request, how often they return, and whether those requests succeed. Track crawler activity across multiple projects from one web dashboard.
+## Install with Docker Compose
 
-## Built for SEO and GEO teams
-
-Bot Observability provides crawl-side evidence for search and AI visibility work:
-
-- Which AI, search, and SEO crawlers are visiting?
-- Which pages are they requesting?
-- Are important URLs returning errors or redirects?
-- Is crawler activity changing over time?
-- Is each project's logging pipeline healthy?
-
-It measures requests reaching your sites, not citations inside AI answers. Use it alongside search and AI visibility tools when you need both crawl activity and citation data.
-
-## Features
-
-- **Bot Detection** — Identifies 130+ bots by User-Agent across AI training crawlers, search engines, SEO tools, social platforms, monitoring services, and CLI tools
-- **Bot Verification** — Confirms bot identity via reverse DNS (PTR) lookups and known IP CIDR ranges
-- **Multi-Project Support** — Track bot traffic across multiple web projects from a single dashboard
-- **Trend Analysis** — Period-over-period comparison (24h / 7d / 30d / 90d / 1y, or a custom date range) showing rising bots, pages, and projects
-- **Status Quality** — Response-code rollups, top failing paths, API/sensitive path hits, and bots with error or UA-only traffic
-- **AI Crawler Intel** — Dedicated view for AI training and search crawlers with confidence breakdowns (verified vs UA-only) and a crawls-vs-visits breakdown by company
-- **Raw Events** — Filterable event log with bot name, path, project, IP, and user-agent details
-- **Data Health Monitoring** — Heartbeat freshness tracking to detect logging pipeline issues
-
-## Common use cases
-
-- **AI crawler monitoring** — Track GPTBot, ClaudeBot, PerplexityBot, Google-Extended, and other AI-related crawlers.
-- **Technical SEO monitoring** — Find crawl errors, redirects, failing paths, and unexpected API or sensitive-route requests.
-- **GEO research** — See which automated agents and retrieval crawlers reach your content as part of broader AI visibility analysis.
-- **Multi-site reporting** — Compare crawler activity across websites, products, environments, or client projects.
-- **Privacy-conscious observability** — Self-host the dashboard and store submitted IPs only as keyed hashes.
-
-## Screenshots
-
-The public landing page includes a no-database preview with illustrative data. These captures show the overall product surface and the dashboard’s crawler-mix panel:
-
-![Bot Observability landing page](docs/screenshots/landing-page.png)
-
-![Dashboard preview with crawler mix](docs/screenshots/dashboard-preview.png)
-
-## Tech Stack
-
-- **Next.js 16** (App Router, Turbopack)
-- **TypeScript**
-- **Tailwind CSS v4**
-- **Recharts** (chart components)
-- **PostgreSQL** (Aiven or any standard Postgres)
-
-## Getting Started
-
-### Prerequisites
-
-- Node.js 20+
-- A PostgreSQL database (Aiven, Neon, or any standard Postgres)
-
-### Setup
+Requires Docker with Compose v2.24.4 or newer. The app is built from this repository; no published application image is required.
 
 ```bash
-# Install dependencies
-npm install
-
-# Set environment variables
+git clone https://github.com/vesivanov/bot-observability.git
+cd bot-observability
 cp .env.example .env
-# Edit .env with your values
 ```
 
-### Environment Variables
+Edit `.env`. Generate a different secret for each role with `openssl rand -hex 32`. For the bundled database use:
 
-| Variable | Required | Description |
-|---|---|---|
-| `DATABASE_URL` | Yes | PostgreSQL connection string |
-| `BOT_ADMIN_TOKEN` | Yes | Dashboard login and session-signing secret; use a unique 32+ character value |
-| `BOT_IP_HASH_SECRET` | Yes | Dedicated 32+ character secret for keyed IP hashes; do not reuse another role's secret |
-| `BOT_INGEST_TOKENS` | Yes | JSON object mapping project names to unique 32+ character ingestion keys |
+```dotenv
+DATABASE_URL=postgres://postgres:postgres@db:5432/bot_observability
+BOT_ADMIN_TOKEN=<admin secret>
+BOT_IP_HASH_SECRET=<different IP hash secret>
+BOT_INGEST_TOKENS='{"marketing-site":"<project ingestion secret>"}'
+BOT_COLLECTOR_ORIGIN=http://localhost:3000
+```
 
-Generate each secret with `openssl rand -base64 32` or an equivalent cryptographically secure generator. During migration, the legacy `BOT_LOG_TOKEN` is accepted only when no new ingestion mapping is configured.
-
-### Database Setup
-
-Migrations live in `db/migrations/*.sql` and are applied in order by `scripts/migrate.mjs`, which tracks what's already been applied in a `schema_migrations` table (safe to re-run):
+The default database is isolated in the Compose network. To change its password, set `POSTGRES_PASSWORD` and update `DATABASE_URL` to match, before first startup. Existing volumes keep their original password. Keep `.env` private.
 
 ```bash
+docker compose up --build -d
+```
+
+PostgreSQL becomes healthy, the one-shot `migrate` service applies pending migrations, and then the app starts. Open [localhost:3000/dashboard](http://localhost:3000/dashboard), sign in with `BOT_ADMIN_TOKEN`, and choose a configured project. The app binds to loopback by default. For a remote installation, put a TLS reverse proxy in front of it, configure `BOT_COLLECTOR_ORIGIN` to its reachable public origin, and set `BOT_LISTEN_ADDRESS` if required.
+
+The named `database` volume survives container restarts and `docker compose down`. **`docker compose down -v` deletes it.** Review [operations](docs/operations.md) before maintenance.
+
+## Use an external PostgreSQL database
+
+Set `DATABASE_URL` to your provider's connection string, including its required TLS settings. The override starts migrations and the app without the bundled database:
+
+```bash
+docker compose -f compose.yaml -f compose.external.yaml up --build -d
+```
+
+Or run directly with Node 24 (see `.nvmrc`):
+
+```bash
+npm ci
+npm run setup     # fills missing/placeholder secrets; preserves real values
+# Set DATABASE_URL in .env if setup reports that a database is needed.
 npm run migrate
-# or point it at a specific database:
-node scripts/migrate.mjs "$DATABASE_URL"
-```
-
-The `bot_hits_daily` and `bot_first_seen` tables are seeded from existing history by the migration and then kept current by `insertHit` on every event. Migration `004_weighted_rollups.sql` repairs the daily rollup for existing deployments where sampled rows were previously backfilled with unweighted counts. If you apply migrations while an older (pre-rollup) build is still receiving traffic, those rows land in `bot_hits` but not the rollup; after deploying, run the reconcile script once to rebuild the rollup from raw and restore exact parity (safe to re-run any time you suspect drift):
-
-```bash
-npm run reconcile-rollups
-# or: node scripts/reconcile-rollups.mjs "$DATABASE_URL"
-```
-
-### Development
-
-```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The landing page is at `/`, the dashboard at `/dashboard`.
+For a production Node host, use `npm run build` and `npm start` after migration. `/` has an illustrative preview that requires no database. `/dashboard` requires database and administrator configuration. The application can also run on a compatible Node/serverless host; follow that platform's request lifecycle and database guidance.
 
-For a first local check, open `/` before configuring a database. The landing page and dashboard preview use illustrative data; `/dashboard` requires a configured `BOT_ADMIN_TOKEN` and `DATABASE_URL`.
+## Connect a website
 
-### Deploying
+Open **Website connection** in the dashboard and choose the project's configured credential. Keep credentials in server environment variables; never use `NEXT_PUBLIC_*` for them.
 
-The app is a standard Next.js app and works on Vercel or any Node host that can run `next start`.
+1. Copy [the maintained Next.js sender](examples/nextjs/proxy.ts) into the website as `src/proxy.ts`, or `proxy.ts` without a `src` directory. Merge it with existing routing/authentication logic. Configure `BOT_COLLECTOR_ORIGIN` and `BOT_INGEST_TOKEN` on the website, then restart/deploy that website.
+2. Send a probe **to a website route that runs the sender**:
 
-For Vercel:
+   ```bash
+   curl --user-agent 'BotObservability-Connection-Probe/1.0' https://your-website.example/
+   ```
 
-1. Create a PostgreSQL database (Aiven, Neon, or any provider).
-2. Run `npm run migrate` (or `node scripts/migrate.mjs "$DATABASE_URL"`).
-3. Generate separate admin, IP-hash, and per-project ingestion secrets.
-4. Add `DATABASE_URL`, `BOT_ADMIN_TOKEN`, `BOT_IP_HASH_SECRET`, and `BOT_INGEST_TOKENS` as environment variables.
-5. Deploy the repository.
-6. Open `/dashboard` and sign in with `BOT_ADMIN_TOKEN`.
+3. Press **Check receipt**. It reads the latest receipt immediately for the selected project. This verifies that sender path reached the collector. It does not verify every route, future delivery or final response status.
+4. Real bot activity appears when ordinary bot requests arrive. **Collector check** verifies the collector's internal configuration/database write, independently of the website. Checks and probes never add analytics traffic.
 
-Do not expose any of these secrets in client-side browser code. Tracked sites should send events from a server-only proxy, route, function, or backend logger.
+The sender prefilters likely bots, uses a 2-second timeout, checks HTTP failures, and logs a short failure without payloads or credentials. Delivery is best effort, with no retries/deduplication. `event.waitUntil` ties work to Next.js's request lifecycle; confirm that your host supports it. A request-stage proxy sends unknown final status, because it cannot observe the application's eventual response.
 
-## Routes
+An original client IP is optional. Only configure `BOT_TRUST_CLIENT_IP_HEADER` on the website when your deployment overwrites that header with the original IP. The collector never replaces a missing payload IP with the sender's transport address. Sampling accepts `1`, `0.5`, `0.25`, or `0.1`; set `BOT_SAMPLE_RATE` on the website if needed. The collector reclassifies the user agent, so reported `bot_name` and `bot_category` do not override it.
 
-The dashboard has 4 tabs, selected via `?view=`:
+## Generic HTTP contract
 
-| Route | Description |
-|---|---|
-| `/` | Landing page with feature overview and login |
-| `/dashboard` or `/dashboard?view=overview` | Totals, crawler mix, daily trend, time-of-day distribution, movers, and AI crawls-vs-visits by company (default tab) |
-| `/dashboard?view=bots` | Full bot list; add `&bot=<name>` for a per-bot detail view (trend chart, top pages, first/last seen) or `&category=ai` to filter to AI bots |
-| `/dashboard?view=health` | 2xx/3xx/4xx/5xx mix, failing paths, API/sensitive path hits |
-| `/dashboard?view=events` | Filterable raw event log |
-| `/api/bot-hit` | Authenticated bot event ingestion endpoint |
-| `/login` | POST handler for token auth |
+Send server-side JSON to `POST /api/bot-hit` with `Authorization: Bearer <project key>` or `x-bot-log-token`. Project identity comes from the configured key.
 
-Older URLs (`?view=ai`, `?view=trends`, `?view=status`, `?view=pages`, `?view=bot&bot=<name>`) still work — they 307-redirect to their current equivalent (see `src/proxy.ts`).
+| Field | Meaning |
+| --- | --- |
+| `user_agent` | Original website request UA; authoritative for classification |
+| `url` or `host` + `path` | Requested page; query values are stripped by default |
+| `method` | Website request method; defaults to GET |
+| `status_code` | Known final HTTP response, 200–599; omitted/0/other values mean unknown |
+| `ip` | Optional original client IP from a trusted source; never the collector/sender IP |
+| `sample_rate` | Accepted reciprocal sampling probability; defaults to 1 |
+| `referer` | Optional; query values, credentials and fragments stripped by default |
+| `environment`, `deployment_url`, `country`, `region`, `city`, `timezone` | Optional stored context; no environment/host filter is promised |
+| `heartbeat: true` | Optional sender heartbeat; updates project health without traffic |
+| `probe: "connection"` | Dedicated external sender receipt; no traffic |
 
-Every view also accepts `?period=`, either a preset (`1`, `7`, `30`, `90`, `365` days) or a custom range as `YYYY-MM-DD_YYYY-MM-DD`. Periods over 90 days switch views into a rollup-backed "long-range mode" (see Architecture below) that hides path-level panels the daily rollup can't serve.
+Ordinary bot events return 201 with `stored: true`. Non-bots return 200 with `stored: false, reason: "not_bot"`. Probes return 200 with `received: true` and the credential's project. Authentication/configuration/malformed/storage failures use 401/503/400/500. A rejected project quota returns 429 and `Retry-After: 60`. The default is 120 bot submissions/minute per project per process, after classification; control events have a separate 30/minute allowance. This is an in-memory per-process policy, not a distributed capacity guarantee.
 
-## Ingesting Bot Hits
+A backend that can observe final outcomes may send `status_code`; the Next.js proxy example cannot. Use a real website request in this contract; connection testing should use the probe flow above.
 
-Tracked sites should `POST` JSON to the collector's `/api/bot-hit` endpoint with a project-scoped bearer token or `x-bot-log-token` header. Bot identity, category, and confidence are derived server-side from the submitted user agent and IP. The collector derives the project from the credential; a new credential cannot submit for another project.
+## What the dashboard shows
 
-Send `status_code` when it is available. Status reports show older or incomplete events as `not captured`; that is not a real HTTP status class.
+Overview has request volume, comparison, AI share, error rate with outcome coverage, one main UTC trend, category/bot shares, top pages and evidence links. Hour-of-day distributions, company comparisons and movers are under **More analysis**. Bots offers ranking and detail; Health distinguishes success, redirects, client/server errors and unknown outcomes; Raw Events shows retained request records. Redirects can be expected behavior; the dashboard does not diagnose them as broken automatically.
 
-```bash
-curl -X POST "$DASHBOARD_URL/api/bot-hit" \
-  -H "Authorization: Bearer $BOT_INGEST_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "project": "marketing-site",
-    "environment": "production",
-    "url": "https://example.com/pricing?ref=ai",
-    "method": "GET",
-    "status_code": 200,
-    "user_agent": "GPTBot/1.0",
-    "ip": "203.0.113.10",
-    "referer": "",
-    "sample_rate": 1
-  }'
-```
+Selections preserve project, category and time through navigation. Presets use rolling half-open intervals. Custom date ranges include both selected UTC dates internally as `[start midnight, next day after end midnight)`. Daily charts include both partial edge days. Aggregate-only history uses explicitly displayed UTC day bounds; it cannot recreate paths or exact request times. Raw Events keeps your selected period and explains its 90-day query cap and retention boundary.
 
-Minimal non-blocking Next.js Proxy example:
+Volume is sample-expanded using `1/sample_rate`; sampled volume is an estimate. Unique pages are observed paths, not complete coverage of a sampled website. Known outcomes are final statuses 200–599. Error rate divides weighted 4xx/5xx requests by weighted known outcomes; all unknown yields **Unknown**. Stored integer historical rollups may have rounding differences for legacy arbitrary sample rates. Scope-sensitive global discovery is suppressed under a project/category filter.
 
-```ts
-import { NextResponse, type NextFetchEvent, type NextRequest } from "next/server";
-import { isLikelyBotUserAgent } from "@/lib/bots";
+Latest received activity and optional heartbeat are distinct. No heartbeat is a supported configuration; quiet traffic alone does not establish disconnection. Across projects there is no combined “healthy” badge based on one project's latest heartbeat.
 
-function reportBotHit(request: NextRequest) {
-  return fetch(`${process.env.BOT_OBSERVABILITY_URL}/api/bot-hit`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${process.env.BOT_INGEST_TOKEN}`,
-    },
-    body: JSON.stringify({
-      url: request.url,
-      method: request.method,
-      status_code: 0,
-      user_agent: request.headers.get("user-agent") ?? "",
-      ip: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "",
-      referer: request.headers.get("referer") ?? "",
-    }),
-  }).then((response) => {
-    if (!response.ok) console.error(`[bot-observability] ingestion failed: ${response.status}`);
-  });
-}
+## Identity, privacy and access
 
-export function proxy(request: NextRequest, event: NextFetchEvent) {
-  const response = NextResponse.next();
-  const userAgent = request.headers.get("user-agent") ?? "";
-  if (isLikelyBotUserAgent(userAgent)) {
-    event.waitUntil(reportBotHit(request).catch(() => undefined));
-  }
-  return response;
-}
-```
+User-agent patterns cover AI fetchers, search engines, SEO tools, social previews, monitoring and generic clients. `Google-Extended` and `Applebot-Extended` are robots.txt policy controls, not separate detectable crawlers. Policy explanations remain in the legend. See [Google's policy documentation](https://developers.google.com/search/docs/crawling-indexing/google-common-crawlers#google-extended) and [Apple's documentation](https://support.apple.com/en-us/119829).
 
-Preserve each site's existing redirects, rewrites, locale handling, security headers, and content negotiation around this sender. The collector derives the project from the token, and `status_code: 0` means that a pass-through Proxy does not claim to know the final downstream status.
+This implementation uses forward-confirmed reverse DNS for Googlebot, Bingbot and Applebot, matching the documented hostname domain and resolving it back to the original IP. It does **not** check published CIDR lists. OpenAI and Anthropic UAs remain UA-only. “UA only” means no successful supported DNS confirmation; historical records do not record a failure reason. See [Google](https://developers.google.com/search/docs/crawling-indexing/verifying-googlebot), [Bing](https://www.bing.com/webmasters/help/how-to-verify-bingbot-3905dc26), and [Apple](https://support.apple.com/en-us/119829).
 
-Heartbeat events can be sent periodically to monitor pipeline freshness:
+Original IPs are hashed with keyed HMAC-SHA-256 before storage. Supported verification sends that IP to Google's DNS-over-HTTPS resolver in memory. URL/referrer query values are discarded by default. `BOT_QUERY_ALLOWLIST` may explicitly preserve a small comma-separated set of required query keys; never allow secrets. These rules affect future ingestion; old data is not rewritten automatically.
 
-```bash
-curl -X POST "$DASHBOARD_URL/api/bot-hit" \
-  -H "Authorization: Bearer $BOT_INGEST_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"heartbeat":true,"environment":"production"}'
-```
+The dashboard is for trusted operators with a shared administrator credential and signed session cookie. It is not a public team workspace: viewer accounts, team roles and OIDC are not implemented. Project credentials remain environment-managed.
 
-Heartbeats update one row in `project_health` per project. They are idempotent and do not append rows to `bot_hits`.
+## Configuration and operations
 
-### Payload Fields
+Required: `DATABASE_URL`, `BOT_ADMIN_TOKEN`, `BOT_IP_HASH_SECRET`, `BOT_INGEST_TOKENS`. Optional collector settings: `BOT_COLLECTOR_ORIGIN`, `BOT_EVENT_RPM`, `BOT_QUERY_ALLOWLIST`. Single-project credentials may use `BOT_INGEST_TOKEN` plus `BOT_INGEST_PROJECT`. Legacy `BOT_LOG_TOKEN` ingestion is accepted only with the explicit `BOT_ACCEPT_LEGACY_INGEST=true` migration window; rotate it out afterwards.
 
-| Field | Required | Notes |
-|---|---:|---|
-| `project` or `project_name` | Legacy only | New project-scoped credentials derive this value from the credential; legacy senders default to `default` |
-| `url` | No | Used to derive `host`, `path`, and `query_string` when those are not provided |
-| `path` | No | Useful when you do not want to send full URLs |
-| `method` | No | Defaults to `GET` |
-| `status_code` or `status` | No | Use the final HTTP response status when available |
-| `user_agent` | Yes for bot detection | Non-bot events are ignored unless `heartbeat` is true |
-| `ip` | No | Enables bot verification; stored only as a keyed HMAC-SHA-256 value, never as the raw submitted IP |
-| `referer` | No | Stored for raw event inspection |
-| `environment` | No | Defaults to `production` |
-| `is_api_route` | No | Helps the Status tab surface API hits |
-| `sample_rate` | No | Allowed values are `1`, `0.5`, `0.25`, and `0.1`; rollups weight each row by the exact integer reciprocal |
-| `heartbeat` | No | Set true for pipeline health events |
+All operator scripts load `.env`; nonempty shell values take precedence. Migrations are recorded in `schema_migrations`; already applied files never rerun. Pending migration 004 fills missing daily buckets while preserving existing uncertain history. Migration 005 establishes a conservative completeness watermark; prior pruning cannot be inferred from the oldest surviving row. Reconciliation requires a stopped collector and rebuilds only a proven or explicitly attested complete interval.
 
-### Limits
+See [upgrade, backup/restore, retention and reconciliation](docs/operations.md). Database pools are small, reused while active and released when idle; read [the lifecycle details](docs/cpu-lifecycle.md). Query caches are short lived; connection receipt reads bypass them. Capacity is not promised without measurements.
 
-The ingestion endpoint enforces a few hardcoded limits (see `src/app/api/bot-hit/route.ts`):
-
-- **Max request body**: 32KB (`MAX_BODY_BYTES`). Larger requests (by `Content-Length`) are rejected.
-- **Rate limit**: 120 requests/minute per caller IP (`RATE_LIMIT_RPM`), tracked in an in-memory, **per-serverless-instance** store — see the caveat under [Architecture](#architecture); it is not a global ceiling on multi-instance platforms.
-- **Field truncation**: string fields are silently truncated, not rejected — 2000 characters for most string fields (`MAX_STRING_LENGTH`), 1000 characters for `path` (`MAX_PATH_LENGTH`). Oversized values are cut, not errored.
-- **Responses**:
-  | Status | Meaning |
-  |---|---|
-  | `201` | Event stored (`{ stored: true, bot_name, bot_category, confidence }`) |
-  | `200` | Not stored — non-bot, non-heartbeat traffic (`{ stored: false, reason: "not_bot" }`) |
-  | `400` | Invalid or too-large JSON payload |
-  | `401` | Missing/invalid ingestion credential |
-  | `429` | Rate limit exceeded |
-  | `503` | Ingestion not configured (`DATABASE_URL`, `BOT_IP_HASH_SECRET`, or ingestion credentials missing/weak) |
-
-## Privacy and Security
-
-- The dashboard is protected by `BOT_ADMIN_TOKEN`, not a full user-management system. A successful login creates a signed, HTTP-only, same-site session cookie valid for 1 year; the token itself is never stored in the cookie.
-- Ingestion uses project-scoped `BOT_INGEST_TOKENS`; keep them server-side and never place them in `NEXT_PUBLIC_*` variables.
-- Submitted IP addresses are used for bot verification and then stored only as domain-separated, keyed HMAC-SHA-256 values derived from `BOT_IP_HASH_SECRET`. Raw IP storage is not supported.
-- Rotating `BOT_IP_HASH_SECRET` changes the keyed hash produced for future observations of the same IP. Existing stored hashes remain unchanged.
-- User agents, paths, referrers, approximate geo fields, deployment URLs, and status codes may be stored.
-- Rotate `DATABASE_URL` and every role-specific secret before making a previously private deployment public if any may have been exposed outside trusted systems.
-
-## Architecture
-
-- **Storage**: a single `bot_hits` raw event table, two maintained tables — `bot_hits_daily` (a `(day, project, bot, category, status_class)` rollup used for long-range and high-volume views) and `bot_first_seen` (per-bot first/last-seen timestamps) — plus idempotent `project_health` heartbeat state. Bot events update the raw row and rollups in one transaction; heartbeats update only `project_health`. If rows are ever ingested by an older build that predates the rollup, `npm run reconcile-rollups` rebuilds both tables from raw (see Database Setup). Day buckets are UTC (`DATE(created_at)`); the UI displays timestamps in Europe/Berlin.
-- **Request-scoped DB client**: each request gets its own `postgres` client via `cache()` + `after()` (see `src/lib/db.ts` / `src/app/dashboard/page.tsx`), closed at the end of the request rather than pooled indefinitely — deliberate for small free-tier Postgres connection limits (e.g. Aiven).
-- **Rendering**: the dashboard streams server-rendered content with a `Suspense` boundary per view/panel, so slow queries don't block the whole page.
-- **Rate limiting is per-instance, not global**: `/api/bot-hit`'s rate limiter is an in-memory `Map` scoped to a single running process (see `src/app/api/bot-hit/route.ts`). On multi-instance serverless platforms like Vercel, each concurrently-running instance enforces its own 120 req/min ceiling independently — there is no shared/global counter. Real aggregate throughput across all instances can therefore be significantly higher than 120 req/min. Do not rely on this limiter as a hard global cap; put a WAF/edge rate limit in front of it if you need one.
-
-### Testing
-
-- `npm test` / `npm run test:unit` — unit tests (pure logic: bot detection, category normalization, period parsing, attention-strip thresholds, etc.), no database required.
-- `npm run test:integration` — integration tests against a real Postgres database, gated on `TEST_DATABASE_URL` being set (skipped otherwise). They apply the migrations, seed fixtures, and clean up after themselves.
-
-## Retention
-
-Raw events can be retained for a bounded period while daily rollups, first/last-seen data, and project health remain available. The optional cleanup command defaults to 90 days:
-
-```bash
-npm run retain-raw
-# or: node scripts/retain-raw-events.mjs "$DATABASE_URL" 90
-```
-
-Schedule it daily or weekly. It only deletes old rows from `bot_hits`; it does not delete or rebuild rollups, first/last-seen records, or `project_health`:
-
-```sql
-DELETE FROM bot_hits
-WHERE created_at < now() - interval '90 days';
-```
-
-## Bot Categories
-
-| Category | Description |
-|---|---|
-| AI Training | Bulk training data collectors (GPTBot, ClaudeBot, etc.) |
-| AI Search | Indexers for AI chat products (OAI-SearchBot, PerplexityBot, etc.) |
-| AI Agent | On-demand user-triggered fetches (ChatGPT-User, Claude-User, etc.) |
-| Search Engine | Traditional search index crawlers (Googlebot, Bingbot, etc.) |
-| Social Preview | Link unfurling / share preview cards (Twitterbot, Slack, etc.) |
-| SEO Tool | SEO audit and tech detection (Ahrefs, Semrush, etc.) |
-| Monitoring | Uptime / performance checks (Pingdom, UptimeRobot, etc.) |
-| Archival | Web page preservation (Internet Archive, etc.) |
-| Generic / CLI | Uncategorized automated agents (curl, wget, etc.) |
+[Contributing and local checks](CONTRIBUTING.md) · [Security reporting](SECURITY.md). GitHub Actions is disabled at the operator's request; verification runs locally.

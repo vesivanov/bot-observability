@@ -30,9 +30,9 @@ function dateKey(date: Date) {
   return date.toISOString().slice(0, 10);
 }
 
-function fillDailyTrend(data: DailyCount[], periodDays: number, referenceTime: Date): DailyCount[] {
+function fillDailyTrend(data: DailyCount[], periodDays: number, referenceTime: Date, rangeStart?: Date): DailyCount[] {
   const byDate = new Map(data.map((row) => [row.date, row.count]));
-  return fillDatePeriods(periodDays, referenceTime).map((key) => ({ date: key, count: byDate.get(key) ?? 0 }));
+  return fillDatePeriods(rangeStart ?? periodDays, referenceTime).map((key) => ({ date: key, count: byDate.get(key) ?? 0 }));
 }
 
 const OTHER_CATEGORY_KEY = "other";
@@ -82,14 +82,14 @@ function buildDailyCategorySeries(data: DailyCategoryCount[], bucketKeys: string
 export type Granularity = "day" | "week" | "month";
 
 function bucketStart(dateStr: string, gran: Granularity): string {
-  const d = new Date(dateStr + "T00:00:00");
+  const d = new Date(dateStr + "T00:00:00Z");
   if (gran === "month") {
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`;
   }
   if (gran === "week") {
-    const day = d.getDay();
+    const day = d.getUTCDay();
     const diff = day === 0 ? -6 : 1 - day; // Monday-based ISO week
-    d.setDate(d.getDate() + diff);
+    d.setUTCDate(d.getUTCDate() + diff);
   }
   return dateKey(d);
 }
@@ -118,16 +118,16 @@ function aggregateDailyCategory(data: DailyCategoryCount[], gran: Granularity): 
 }
 
 function formatBucketLabel(dateStr: string, granularity: Granularity) {
-  const date = new Date(dateStr + "T00:00:00");
-  if (granularity === "month") return date.toLocaleDateString("en-US", { month: "short", year: "numeric" });
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const date = new Date(dateStr + "T00:00:00Z");
+  if (granularity === "month") return date.toLocaleDateString("en-US", { timeZone: "UTC", month: "short", year: "numeric" });
+  return date.toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric" });
 }
 
 function formatBucketTooltipLabel(dateStr: string, granularity: Granularity) {
-  const date = new Date(dateStr + "T00:00:00");
-  if (granularity === "month") return date.toLocaleDateString("en-US", { month: "long", year: "numeric" });
-  if (granularity === "week") return `Week of ${date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
-  return date.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+  const date = new Date(dateStr + "T00:00:00Z");
+  if (granularity === "month") return date.toLocaleDateString("en-US", { timeZone: "UTC", month: "long", year: "numeric" });
+  if (granularity === "week") return `Week of ${date.toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric" })}`;
+  return date.toLocaleDateString("en-US", { timeZone: "UTC", weekday: "long", month: "short", day: "numeric" });
 }
 
 export function DailyTrendChart({ data, granularity = "day" }: { data: DailyCount[]; granularity?: Granularity }) {
@@ -184,11 +184,13 @@ export function DailyTrendDashboard({
   categoryTrend,
   periodDays,
   referenceTime,
+  rangeStart,
 }: {
   dailyTrend: DailyCount[];
   categoryTrend: DailyCategoryCount[];
   periodDays: number;
   referenceTime: Date;
+  rangeStart?: Date;
 }) {
   const searchParams = useSearchParams();
   const pathname = usePathname();
@@ -202,8 +204,8 @@ export function DailyTrendDashboard({
   const requestedGran = (searchParams.get("gran") as Granularity | null) ?? "day";
   const granularity = allowedGranularities.includes(requestedGran) ? requestedGran : "day";
   const filledDailyTrend = useMemo(
-    () => fillDailyTrend(dailyTrend, periodDays, referenceTime),
-    [dailyTrend, periodDays, referenceTime],
+    () => fillDailyTrend(dailyTrend, periodDays, referenceTime, rangeStart),
+    [dailyTrend, periodDays, referenceTime, rangeStart],
   );
   const displayDailyTrend = useMemo(
     () => aggregateDaily(filledDailyTrend, granularity),
@@ -276,7 +278,7 @@ export function DailyTrendDashboard({
         {mode === "total" ? (
           <DailyTrendChart data={displayDailyTrend} granularity={granularity} />
         ) : (
-          <DailyCategoryTrendChart data={categoryTrend} periodDays={periodDays} referenceTime={referenceTime} granularity={granularity} />
+          <DailyCategoryTrendChart data={categoryTrend} periodDays={periodDays} referenceTime={referenceTime} rangeStart={rangeStart} granularity={granularity} />
         )}
       </div>
     </div>
@@ -287,18 +289,20 @@ export function DailyCategoryTrendChart({
   data,
   periodDays,
   referenceTime,
+  rangeStart,
   granularity = "day",
 }: {
   data: DailyCategoryCount[];
   periodDays: number;
   referenceTime: Date;
+  rangeStart?: Date;
   granularity?: Granularity;
 }) {
   const searchParams = useSearchParams();
   const pathname = usePathname();
   const router = useRouter();
   const { categories, series, totals } = useMemo(() => {
-    const fullDayKeys = fillDailyTrend([], periodDays, referenceTime).map((row) => row.date);
+    const fullDayKeys = fillDailyTrend([], periodDays, referenceTime, rangeStart).map((row) => row.date);
     if (granularity !== "day") {
       const aggregated = aggregateDailyCategory(data, granularity);
       // Zero-fill every week/month bucket across the full period, not just
@@ -308,7 +312,7 @@ export function DailyCategoryTrendChart({
       return buildDailyCategorySeries(aggregated, bucketKeys);
     }
     return buildDailyCategorySeries(data, fullDayKeys);
-  }, [data, periodDays, referenceTime, granularity]);
+  }, [data, periodDays, referenceTime, rangeStart, granularity]);
   const catsParam = searchParams.get("cats");
   const selectedFromUrl = catsParam === "none" ? [] : catsParam?.split(",").filter(Boolean) ?? [];
   const selectedSet = new Set(selectedFromUrl);

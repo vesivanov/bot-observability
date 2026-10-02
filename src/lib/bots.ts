@@ -54,7 +54,6 @@ export const PATTERNS: BotMatch[] = [
   { name: "Anthropic", category: "ai_training", pattern: /anthropic-ai/i },
 
   // ── Google AI ──────────────────────────────────────────
-  { name: "Google-Extended", category: "ai_training", pattern: /Google-Extended/i },
   // GoogleOther is Google's internal/unspecified R&D crawler — its purpose
   // is not publicly documented. It is NOT the AI-training opt-out token
   // (that's Google-Extended above), so we don't assert an AI-training
@@ -113,7 +112,6 @@ export const PATTERNS: BotMatch[] = [
   { name: "Meta-ExternalFetcher", category: "ai_agent", pattern: /Meta-ExternalFetcher/i },
 
   // ── Apple ──────────────────────────────────────────────
-  { name: "Applebot-Extended", category: "ai_training", pattern: /Applebot-Extended/i },
 
   // ── xAI / Grok ─────────────────────────────────────────
   { name: "xAI-Bot", category: "ai_training", pattern: /xAI-Bot/i },
@@ -277,7 +275,7 @@ const GENERIC_BOT_RE = /bot|crawler|spider|scrape|scraping|fetch/i;
 // Static matcher source copied into tracked-site proxy configurations. It is
 // deliberately broader than the exact PATTERNS list because the matcher is a
 // transport prefilter; the collector still performs authoritative detection.
-export const LIKELY_BOT_UA_PATTERN = ".*(?:[Bb][Oo][Tt]|[Cc][Rr][Aa][Ww][Ll][Ee][Rr]|[Ss][Pp][Ii][Dd][Ee][Rr]|[Ss][Cc][Rr][Aa][Pp]|[Ff][Ee][Tt][Cc][Hh]|curl|Wget|Python-urllib|python-requests|Go-http-client|Java/|Ruby|HTTPie|GPTBot|ChatGPT-User|OAI-|Claude|claude-code|anthropic-ai|Google-Extended|GoogleOther|GoogleAgent|Google-Cloud|Google-Safety|Google-Inspection|Google-Notebook|Google-GeminiNotebook|Gemini-Deep-Research|Perplexity|Phind|Andibot|Meta[- ]External|meta-webindexer|Facebook|Applebot|xAI|Grok|Bytespider|CCBot|Amazonbot|Cohere|Diffbot|Imagesift|DeepSeek|AI2|Mistral|HuggingFace|ChatGLM|GLM-Spider|Timpibot|Velen|Omgili|Seekr|YouBot|ResearchBot|Kangaroo|Cloudflare-AI-Search|Firecrawl|magpie|Groq|Webzio|Character-AI|Kagi|Kimi|Tavily|ICC-Crawler|Pangu|Devin|Manus|TikTokSpider|NovaAct|Tongyi|Yiyan|BingPreview|Yandex|Baiduspider|Brave|Duck|Sogou|Seznam|Naver|Yeti|MJ12|Majestic|Screaming|Site.?Audit|Wappalyzer|BuiltWith|Similarweb|DataForSeo|SISTRIX|Botify|Siteimprove|Brightbot|HubSpot|Twitterbot|facebookexternalhit|Facebot|LinkedInBot|Slack|Discord|Telegram|WhatsApp|Pinterest|Bluesky|Tumblr|SkypeUriPreview|NotionBot|Iframely|ZoomBot|Snapchat|Embedly|Line/[0-9]|archive[.]org|wayback|ia_archiver|Pingdom|UptimeRobot|Datadog|NewRelic|GTmetrix|WebPageTest|wptagent|PetalBot|AdsBot|Scrapy|axios/[0-9]|okhttp/[0-9]|libwww-perl).*";
+export const LIKELY_BOT_UA_PATTERN = ".*(?:[Bb][Oo][Tt]|[Cc][Rr][Aa][Ww][Ll][Ee][Rr]|[Ss][Pp][Ii][Dd][Ee][Rr]|[Ss][Cc][Rr][Aa][Pp]|[Ff][Ee][Tt][Cc][Hh]|curl|Wget|Python-urllib|python-requests|Go-http-client|Java/|Ruby|HTTPie|GPTBot|ChatGPT-User|OAI-|Claude|claude-code|anthropic-ai|GoogleOther|GoogleAgent|Google-Cloud|Google-Safety|Google-Inspection|Google-Notebook|Google-GeminiNotebook|Gemini-Deep-Research|Perplexity|Phind|Andibot|Meta[- ]External|meta-webindexer|Facebook|Applebot|xAI|Grok|Bytespider|CCBot|Amazonbot|Cohere|Diffbot|Imagesift|DeepSeek|AI2|Mistral|HuggingFace|ChatGLM|GLM-Spider|Timpibot|Velen|Omgili|Seekr|YouBot|ResearchBot|Kangaroo|Cloudflare-AI-Search|Firecrawl|magpie|Groq|Webzio|Character-AI|Kagi|Kimi|Tavily|ICC-Crawler|Pangu|Devin|Manus|TikTokSpider|NovaAct|Tongyi|Yiyan|BingPreview|Yandex|Baiduspider|Brave|Duck|Sogou|Seznam|Naver|Yeti|MJ12|Majestic|Screaming|Site.?Audit|Wappalyzer|BuiltWith|Similarweb|DataForSeo|SISTRIX|Botify|Siteimprove|Brightbot|HubSpot|Twitterbot|facebookexternalhit|Facebot|LinkedInBot|Slack|Discord|Telegram|WhatsApp|Pinterest|Bluesky|Tumblr|SkypeUriPreview|NotionBot|Iframely|ZoomBot|Snapchat|Embedly|Line/[0-9]|archive[.]org|wayback|ia_archiver|Pingdom|UptimeRobot|Datadog|NewRelic|GTmetrix|WebPageTest|wptagent|PetalBot|AdsBot|Scrapy|axios/[0-9]|okhttp/[0-9]|libwww-perl).*";
 
 /**
  * Cheap, shared transport prefilter for tracked-site proxies. It deliberately
@@ -287,24 +285,26 @@ export const LIKELY_BOT_UA_PATTERN = ".*(?:[Bb][Oo][Tt]|[Cc][Rr][Aa][Ww][Ll][Ee]
  */
 export function isLikelyBotUserAgent(ua: string): boolean {
   if (!ua) return false;
-  return PATTERNS.some(({ pattern }) => pattern.test(ua)) || CLI_UA_RE.test(ua) || GENERIC_BOT_RE.test(ua);
+  return detectBot(ua) !== null;
 }
 
 export function detectBot(ua: string): BotMatch | null {
   if (!ua || ua.length === 0) return null;
+  // These are robots.txt policy controls, never observable crawler identities.
+  const observableUa = ua.replace(/Google-Extended|Applebot-Extended/gi, "");
 
   for (const match of PATTERNS) {
-    if (match.pattern.test(ua)) {
+    if (match.pattern.test(observableUa)) {
       return match;
     }
   }
 
-  if (CLI_UA_RE.test(ua)) {
-    const name = ua.match(CLI_UA_RE)?.[1] ?? "CLI Tool";
+  if (CLI_UA_RE.test(observableUa)) {
+    const name = observableUa.match(CLI_UA_RE)?.[1] ?? "CLI Tool";
     return { name, category: "generic", pattern: CLI_UA_RE };
   }
 
-  if (GENERIC_BOT_RE.test(ua)) {
+  if (GENERIC_BOT_RE.test(observableUa)) {
     return { name: "Generic Bot", category: "generic", pattern: GENERIC_BOT_RE };
   }
 

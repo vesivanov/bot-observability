@@ -3,6 +3,10 @@ import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import postgres from "postgres";
 
+import { loadEnv } from "./env.mjs";
+
+loadEnv();
+
 const url = process.argv[2] || process.env.DATABASE_URL;
 if (!url) {
   console.error("Usage: node scripts/migrate.mjs <DATABASE_URL>");
@@ -44,7 +48,7 @@ async function main() {
     // database (bot_hits already present) we don't want to re-run it — just
     // record it as applied so future runs treat it consistently.
     if (file === "001_init.sql") {
-      const [{ exists }] = await sql`SELECT to_regclass('public.bot_hits') IS NOT NULL AS exists`;
+      const [{ exists }] = await sql`SELECT to_regclass('bot_hits') IS NOT NULL AS exists`;
       if (exists) {
         await sql`INSERT INTO schema_migrations (name) VALUES (${file})`;
         console.log(`skipped (bot_hits already exists, recorded only): ${file}`);

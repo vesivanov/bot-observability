@@ -1,4 +1,5 @@
 import postgres from "postgres";
+import { getIngestionConfig } from "./auth";
 import type {
   BotHit,
   BotHitRow,
@@ -36,7 +37,7 @@ import { PATTERNS } from "./bots";
 // (1, .5, .25, .1), so every weighted bucket is an integer and can agree
 // exactly with the integer daily rollup. NULLIF also keeps old malformed rows
 // from dividing by zero.
-const HIT_WEIGHT_SQL = "1.0/NULLIF(sample_rate,0)";
+const HIT_WEIGHT_SQL = "1.0/NULLIF(sample_rate::text::numeric,0)";
 
 // Appends a category filter to `values` and returns the SQL clause referencing it.
 // The pseudo-category "ai" matches all ai_* raw categories via LIKE; any other
@@ -73,7 +74,7 @@ function categoryFilterSql(category: string | undefined, values: (string | numbe
 
 // AI bot identities the dashboard treats specially —— mirrored in JS by the
 // company-mapping in src/lib/bot-companies.ts and the legacy remap sets in
-// src/lib/categories.ts. Used by the "AI crawls vs. visits" and AI per-bot
+// src/lib/categories.ts. Used by the "AI crawls and user-triggered fetches" and AI per-bot
 // breakdown panels to scope raw/rollup rows to the AI subspace.
 //
 // Derived from PATTERNS rather than hand-maintained: a hand-maintained copy
@@ -87,6 +88,22 @@ const AI_BOT_NAMES_SQL = Array.from(new Set(
     .map((p) => p.name)
 )).map((name) => `'${name}'`).join(",");
 const AI_CAT_SQL = `'ai_training','ai_search','ai_agent','ai_crawler'`;
+
+function mergeBotConfidence(rows: BotConfidenceCount[]): BotConfidenceCount[] {
+  const merged = new Map<string, BotConfidenceCount>();
+  for (const row of rows) {
+    const bot_category = normalizeBotCategory(row.bot_name, row.bot_category);
+    const key = `${row.bot_name}:${bot_category}`;
+    const existing = merged.get(key);
+    if (!existing) { merged.set(key, { ...row, bot_category }); continue; }
+    existing.total_hits += row.total_hits;
+    existing.verified_hits += row.verified_hits;
+    existing.ua_only_hits += row.ua_only_hits;
+    existing.projects = Array.from(new Set(`${existing.projects}, ${row.projects}`.split(",").map((p) => p.trim()).filter(Boolean))).sort().join(", ");
+    if (row.last_seen > existing.last_seen) existing.last_seen = row.last_seen;
+  }
+  return Array.from(merged.values()).sort((a, b) => b.total_hits - a.total_hits);
+}
 
 export function createDbClient(databaseUrl: string) {
   const sql = postgres(databaseUrl, {
@@ -146,7 +163,7 @@ export function createDbClient(databaseUrl: string) {
         RETURNING created_at, project_name, bot_name, bot_category
       ), upserted_daily AS (
         INSERT INTO bot_hits_daily (day, project_name, bot_name, bot_category, status_class, hits, verified_hits)
-        SELECT created_at::date, project_name, bot_name, bot_category,
+        SELECT (created_at AT TIME ZONE 'UTC')::date, project_name, bot_name, bot_category,
                ${statusClass}, ${hitWeight}, ${verifiedIncrement}
         FROM inserted_hit
         ON CONFLICT (day, project_name, bot_name, bot_category, status_class)
@@ -179,6 +196,29 @@ export function createDbClient(databaseUrl: string) {
         environment = EXCLUDED.environment,
         deployment_url = EXCLUDED.deployment_url
     `;
+  }
+
+  async function recordConnectionReceipt(project: string, kind: "probe" | "collector"): Promise<void> {
+    if (kind === "probe") {
+      await sql`INSERT INTO project_receipts (project_name, last_probe_at) VALUES (${project}, now())
+        ON CONFLICT (project_name) DO UPDATE SET last_probe_at = EXCLUDED.last_probe_at`;
+    } else {
+      await sql`INSERT INTO project_receipts (project_name, last_collector_check_at) VALUES (${project}, now())
+        ON CONFLICT (project_name) DO UPDATE SET last_collector_check_at = EXCLUDED.last_collector_check_at`;
+    }
+  }
+
+  async function projectDelivery(project?: string) {
+    const rows = await sql`SELECT
+      (SELECT MAX(last_probe_at) FROM project_receipts ${project ? sql`WHERE project_name = ${project}` : sql``}) AS last_probe,
+      (SELECT MAX(last_collector_check_at) FROM project_receipts ${project ? sql`WHERE project_name = ${project}` : sql``}) AS last_collector,
+      EXISTS(SELECT 1 FROM bot_hits WHERE heartbeat = FALSE ${project ? sql`AND project_name = ${project}` : sql``}
+        UNION ALL SELECT 1 FROM bot_hits_daily ${project ? sql`WHERE project_name = ${project}` : sql``}) AS prior_activity,
+      EXISTS(SELECT 1 FROM project_health ${project ? sql`WHERE project_name = ${project}` : sql``}) AS heartbeat_received`;
+    const r = rows[0];
+    return { lastProbe: r.last_probe ? new Date(r.last_probe).toISOString() : null,
+      lastCollectorCheck: r.last_collector ? new Date(r.last_collector).toISOString() : null,
+      delivered: Boolean(r.last_probe || r.prior_activity || r.heartbeat_received) };
   }
 
   async function queryFiltered(params: {
@@ -225,7 +265,7 @@ export function createDbClient(databaseUrl: string) {
       values.push(params.from.toISOString());
     }
     if (params.to) {
-      conditions.push(`created_at <= $${paramIndex++}`);
+      conditions.push(`created_at < $${paramIndex++}`);
       values.push(params.to.toISOString());
     }
 
@@ -239,7 +279,7 @@ export function createDbClient(databaseUrl: string) {
     return sql.unsafe(query, values) as unknown as Promise<BotHitRow[]>;
   }
 
-  async function allBotDetails(from: Date, to: Date, project?: string, limit = 100): Promise<BotDetail[]> {
+  async function allBotDetails(from: Date, to: Date, project?: string): Promise<BotDetail[]> {
     const normalizeBotDetails = (rows: BotDetail[]) => {
       const totals = new Map<string, BotDetail>();
       for (const row of rows) {
@@ -264,25 +304,25 @@ export function createDbClient(databaseUrl: string) {
           last_seen: new Date(row.last_seen) > new Date(current.last_seen) ? row.last_seen : current.last_seen,
         });
       }
-      return Array.from(totals.values()).sort((a, b) => b.total_hits - a.total_hits).slice(0, limit);
+      return Array.from(totals.values()).sort((a, b) => b.total_hits - a.total_hits);
     };
     if (project) {
       const rows = await sql.unsafe(`
         SELECT
           bot_name,
           bot_category,
-          ROUND(SUM(${HIT_WEIGHT_SQL}))::int as total_hits,
-          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified')), 0)::int as verified_hits,
+          SUM(${HIT_WEIGHT_SQL})::double precision as total_hits,
+          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified'), 0)::double precision as verified_hits,
           STRING_AGG(DISTINCT project_name, ', ' ORDER BY project_name) as projects,
           MAX(created_at)::text as last_seen
         FROM bot_hits
         WHERE created_at >= $1
-          AND created_at <= $2
+          AND created_at < $2
           AND heartbeat = FALSE
           AND project_name = $3
         GROUP BY bot_name, bot_category
         ORDER BY total_hits DESC
-        LIMIT ${limit * 2}
+
       `, [from.toISOString(), to.toISOString(), project]) as unknown as BotDetail[];
       return normalizeBotDetails(rows);
     }
@@ -290,17 +330,17 @@ export function createDbClient(databaseUrl: string) {
       SELECT
         bot_name,
         bot_category,
-        ROUND(SUM(${HIT_WEIGHT_SQL}))::int as total_hits,
-        COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified')), 0)::int as verified_hits,
+        SUM(${HIT_WEIGHT_SQL})::double precision as total_hits,
+        COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified'), 0)::double precision as verified_hits,
         STRING_AGG(DISTINCT project_name, ', ' ORDER BY project_name) as projects,
         MAX(created_at)::text as last_seen
       FROM bot_hits
       WHERE created_at >= $1
-        AND created_at <= $2
+        AND created_at < $2
         AND heartbeat = FALSE
       GROUP BY bot_name, bot_category
       ORDER BY total_hits DESC
-      LIMIT ${limit * 2}
+
     `, [from.toISOString(), to.toISOString()]) as unknown as BotDetail[];
     return normalizeBotDetails(rows);
   }
@@ -343,10 +383,10 @@ export function createDbClient(databaseUrl: string) {
           ${keyExpression} AS key,
           ${labelExpression} AS label,
           ${projectExpression} AS project,
-          ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS count
+          SUM(${HIT_WEIGHT_SQL})::double precision AS count
         FROM bot_hits
-        WHERE created_at > $1
-          AND created_at <= $2
+        WHERE created_at >= $1
+          AND created_at < $2
           AND heartbeat = FALSE
           AND ${keyExpression} != ''
           ${projectClause}
@@ -357,10 +397,10 @@ export function createDbClient(databaseUrl: string) {
         SELECT
           ${keyExpression} AS key,
           ${projectExpression} AS project,
-          ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS count
+          SUM(${HIT_WEIGHT_SQL})::double precision AS count
         FROM bot_hits
-        WHERE created_at > $3
-          AND created_at <= $4
+        WHERE created_at >= $3
+          AND created_at < $4
           AND heartbeat = FALSE
           AND ${keyExpression} != ''
           ${projectClause}
@@ -368,35 +408,37 @@ export function createDbClient(databaseUrl: string) {
         GROUP BY ${keyExpression}, ${projectExpression}
       )
       SELECT
-        c.key,
-        c.label,
-        c.project,
-        c.count AS current_count,
-        COALESCE(p.count, 0)::int AS previous_count,
-        (c.count - COALESCE(p.count, 0))::int AS delta
+        COALESCE(c.key, p.key) AS key,
+        COALESCE(c.label, p.key) AS label,
+        COALESCE(c.project, p.project) AS project,
+        COALESCE(c.count, 0) AS current_count,
+        COALESCE(p.count, 0)::double precision AS previous_count,
+        (COALESCE(c.count, 0) - COALESCE(p.count, 0))::double precision AS delta
       FROM current_period c
-      LEFT JOIN previous_period p ON p.key = c.key AND p.project = c.project
-      WHERE c.count > COALESCE(p.count, 0)
-      ORDER BY delta DESC, current_count DESC
+      FULL OUTER JOIN previous_period p ON p.key = c.key AND p.project = c.project
+      WHERE COALESCE(c.count, 0) != COALESCE(p.count, 0)
+      ORDER BY ABS(COALESCE(c.count, 0) - COALESCE(p.count, 0)) DESC, current_count DESC
       LIMIT ${limitParam}
     `, values) as unknown as Promise<Mover[]>;
   }
 
-  async function botDetailReport(botName: string, from: Date, to: Date, project?: string): Promise<BotDetailReport | null> {
+  async function botDetailReport(botName: string, from: Date, to: Date, project?: string, category?: string): Promise<BotDetailReport | null> {
     const projectClause = project ? `AND project_name = $4` : "";
     const values = project
       ? [botName, from.toISOString(), to.toISOString(), project]
       : [botName, from.toISOString(), to.toISOString()];
 
+    const categoryClause = categoryFilterSql(category, values);
     const result = await sql.unsafe(`
       WITH base AS (
         SELECT *
         FROM bot_hits
         WHERE bot_name = $1
           AND created_at >= $2
-          AND created_at <= $3
+          AND created_at < $3
           AND heartbeat = FALSE
           ${projectClause}
+          ${categoryClause}
       ),
       project_rank AS (
         SELECT project_name, ROW_NUMBER() OVER (ORDER BY SUM(${HIT_WEIGHT_SQL}) DESC, project_name) AS rank
@@ -411,9 +453,9 @@ export function createDbClient(databaseUrl: string) {
       SELECT
         COALESCE(MAX(base.bot_name), $1) AS bot_name,
         COALESCE(MAX(base.bot_category), 'unknown') AS bot_category,
-        ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS total_hits,
-        COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified')), 0)::int AS verified_hits,
-        COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'ua_only')), 0)::int AS ua_only_hits,
+        SUM(${HIT_WEIGHT_SQL})::double precision AS total_hits,
+        COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified'), 0)::double precision AS verified_hits,
+        COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'ua_only'), 0)::double precision AS ua_only_hits,
         COUNT(DISTINCT base.project_name)::int AS projects_hit,
         COALESCE(MAX(pr.project_name) FILTER (WHERE pr.rank = 1), '') AS top_project,
         COALESCE(MAX(pg.path) FILTER (WHERE pg.rank = 1), '') AS top_page,
@@ -432,26 +474,28 @@ export function createDbClient(databaseUrl: string) {
     };
   }
 
-  async function topPagesForBot(botName: string, from: Date, to: Date, limit = 10, project?: string): Promise<ProjectPageCount[]> {
+  async function topPagesForBot(botName: string, from: Date, to: Date, limit = 10, project?: string, category?: string): Promise<ProjectPageCount[]> {
     const projectClause = project ? `AND project_name = $4` : "";
     const values = project
       ? [botName, from.toISOString(), to.toISOString(), project, limit]
       : [botName, from.toISOString(), to.toISOString(), limit];
     const limitParam = project ? "$5" : "$4";
+    const categoryClause = categoryFilterSql(category, values);
 
     return sql.unsafe(`
       SELECT
         project_name AS project,
         path,
-        ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS count,
+        SUM(${HIT_WEIGHT_SQL})::double precision AS count,
         $1 AS top_bot,
         MAX(created_at)::text AS last_seen
       FROM bot_hits
       WHERE bot_name = $1
         AND created_at >= $2
-        AND created_at <= $3
+        AND created_at < $3
         AND heartbeat = FALSE
         ${projectClause}
+        ${categoryClause}
       GROUP BY project_name, path
       ORDER BY count DESC, last_seen DESC
       LIMIT ${limitParam}
@@ -470,16 +514,26 @@ export function createDbClient(databaseUrl: string) {
     return sql.unsafe(`
       SELECT
         EXTRACT(HOUR FROM created_at)::int AS hour,
-        ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS count
+        SUM(${HIT_WEIGHT_SQL})::double precision AS count
       FROM bot_hits
       WHERE created_at >= $1
-        AND created_at <= $2
+        AND created_at < $2
         AND heartbeat = FALSE
         ${projectClause}
         ${categoryClause}
       GROUP BY EXTRACT(HOUR FROM created_at)
       ORDER BY hour
     `, values) as unknown as Promise<HourlyCount[]>;
+  }
+
+  async function chronologicalHourlyCounts(from: Date, to: Date, project?: string, category?: string): Promise<DailyCount[]> {
+    const values: (string | number)[] = [from.toISOString(), to.toISOString()];
+    const projectClause = project ? `AND project_name = $${values.push(project)}` : "";
+    const categoryClause = categoryFilterSql(category, values);
+    return sql.unsafe(`SELECT to_char(date_trunc('hour', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD"T"HH24:00:00"Z"') AS date,
+      SUM(${HIT_WEIGHT_SQL})::double precision AS count FROM bot_hits
+      WHERE heartbeat = FALSE AND created_at >= $1 AND created_at < $2 ${projectClause} ${categoryClause}
+      GROUP BY date ORDER BY date`, values) as unknown as Promise<DailyCount[]>;
   }
 
   async function botPeriodCounts(params: {
@@ -489,7 +543,7 @@ export function createDbClient(databaseUrl: string) {
     project?: string;
     category?: string;
     botName?: string;
-    limit?: number;
+    limit?: number; // Compatibility only; consumers cap after merging and retain Other.
   }): Promise<BotPeriodCount[]> {
     const values: (string | number)[] = [params.from.toISOString(), params.to.toISOString()];
     let projectClause = "";
@@ -503,38 +557,16 @@ export function createDbClient(databaseUrl: string) {
       values.push(params.botName);
       botNameClause = `AND bot_name = $${values.length}`;
     }
-    values.push(params.limit ?? 12);
-    const limitParam = `$${values.length}`;
     const truncUnit = params.granularity;
-
+    // Keep all identities so the chart's Other series accounts for the
+    // complete selected total, including bots outside a presentation cap.
     const rows = await sql.unsafe(`
-      WITH top_bots AS (
-        SELECT bot_name
-        FROM bot_hits
-        WHERE created_at >= $1
-          AND created_at <= $2
-          AND heartbeat = FALSE
-          ${projectClause}
-          ${categoryClause}
-          ${botNameClause}
-        GROUP BY bot_name
-        ORDER BY SUM(${HIT_WEIGHT_SQL}) DESC, bot_name
-        LIMIT ${limitParam}
-      )
-      SELECT
-        DATE_TRUNC('${truncUnit}', created_at)::date::text AS period,
-        bot_name,
-        MAX(bot_category)::text AS bot_category,
-        ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS count
+      SELECT DATE_TRUNC('${truncUnit}', created_at)::date::text AS period,
+        bot_name, bot_category, SUM(${HIT_WEIGHT_SQL})::double precision AS count
       FROM bot_hits
-      WHERE created_at >= $1
-        AND created_at <= $2
-        AND heartbeat = FALSE
-        ${projectClause}
-        ${categoryClause}
-        ${botNameClause}
-        AND bot_name IN (SELECT bot_name FROM top_bots)
-      GROUP BY DATE_TRUNC('${truncUnit}', created_at)::date, bot_name
+      WHERE created_at >= $1 AND created_at < $2 AND heartbeat = FALSE
+        ${projectClause} ${categoryClause} ${botNameClause}
+      GROUP BY DATE_TRUNC('${truncUnit}', created_at)::date, bot_name, bot_category
       ORDER BY period, count DESC, bot_name
     `, values) as unknown as BotPeriodCount[];
 
@@ -555,12 +587,6 @@ export function createDbClient(databaseUrl: string) {
   async function fetchStatusBatch(from: Date, to: Date, project?: string, category?: string) {
     const scLimit = 12;
     const otherLimit = 16;
-    // bot_status_codes groups by (bot_name, bot_category, status_code) and is
-    // merged in JS by normalized category afterward — a bot with both
-    // ai_agent and legacy ai_crawler rows consumes 2 pre-merge slots but
-    // collapses to 1 post-merge, so double the raw SQL limit to compensate
-    // (mirrors the LIMIT * 2 pattern in allBotDetails).
-    const botScLimit = otherLimit * 2;
     const values: (string | number)[] = [from.toISOString(), to.toISOString()];
     let projectClause = "";
     if (project) {
@@ -572,11 +598,11 @@ export function createDbClient(databaseUrl: string) {
     const result = await sql.unsafe(`
       WITH base AS (
         SELECT * FROM bot_hits
-        WHERE created_at >= $1 AND created_at <= $2 AND heartbeat = FALSE
+        WHERE created_at >= $1 AND created_at < $2 AND heartbeat = FALSE
           ${projectClause} ${categoryClause}
       ),
       base_scode AS (
-        SELECT * FROM base WHERE status_code > 0
+        SELECT * FROM base WHERE status_code >= 200 AND status_code < 600
       ),
       daily_status AS (
         SELECT
@@ -585,29 +611,29 @@ export function createDbClient(databaseUrl: string) {
             WHEN status_code >= 200 AND status_code < 300 THEN '2xx'
             WHEN status_code >= 300 AND status_code < 400 THEN '3xx'
             WHEN status_code >= 400 AND status_code < 500 THEN '4xx'
-            WHEN status_code >= 500 THEN '5xx'
+            WHEN status_code >= 500 AND status_code < 600 THEN '5xx'
             ELSE 'unknown'
           END AS status_class,
-          ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS count
-        FROM base_scode GROUP BY 1, 2 ORDER BY 1, 2
+          SUM(${HIT_WEIGHT_SQL})::double precision AS count
+        FROM base GROUP BY 1, 2 ORDER BY 1, 2
       ),
       summary AS (
         SELECT
-          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL})), 0)::int AS total_hits,
-          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code > 0)), 0)::int AS known_status_hits,
-          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code >= 200 AND status_code < 300)), 0)::int AS success_hits,
-          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code >= 300 AND status_code < 400)), 0)::int AS redirect_hits,
-          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code >= 400 AND status_code < 500)), 0)::int AS client_error_hits,
-          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code >= 500)), 0)::int AS server_error_hits,
-          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code = 0)), 0)::int AS unknown_status_hits,
-          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE is_api_route = TRUE OR path LIKE '/api/%')), 0)::int AS api_route_hits,
+          COALESCE(SUM(${HIT_WEIGHT_SQL}), 0)::double precision AS total_hits,
+          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code >= 200 AND status_code < 600), 0)::double precision AS known_status_hits,
+          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code >= 200 AND status_code < 300), 0)::double precision AS success_hits,
+          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code >= 300 AND status_code < 400), 0)::double precision AS redirect_hits,
+          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code >= 400 AND status_code < 500), 0)::double precision AS client_error_hits,
+          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code >= 500 AND status_code < 600), 0)::double precision AS server_error_hits,
+          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE (status_code < 200 OR status_code >= 600)), 0)::double precision AS unknown_status_hits,
+          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE is_api_route = TRUE OR path LIKE '/api/%'), 0)::double precision AS api_route_hits,
           COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (
             WHERE path ~* '(^|/)(admin|login|wp-admin|wp-login|phpmyadmin|xmlrpc\\.php|config\\.php)(/|$|\\.)'
                OR path ~* '(^|/)(\\.env|\\.git|\\.aws|\\.ssh|\\.htaccess|\\.htpasswd)($|/)'
                OR path ~* '/(etc/passwd|etc/shadow|proc/self)'
                OR path ~* '\\.(bak|sql|backup|old|dump)(\\.gz)?$'
           )), 0)::int AS sensitive_path_hits,
-          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'ua_only')), 0)::int AS ua_only_hits
+          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'ua_only'), 0)::double precision AS ua_only_hits
         FROM base
       ),
       buckets AS (
@@ -616,10 +642,10 @@ export function createDbClient(databaseUrl: string) {
             WHEN status_code >= 200 AND status_code < 300 THEN '2xx'
             WHEN status_code >= 300 AND status_code < 400 THEN '3xx'
             WHEN status_code >= 400 AND status_code < 500 THEN '4xx'
-            WHEN status_code >= 500 THEN '5xx'
+            WHEN status_code >= 500 AND status_code < 600 THEN '5xx'
             ELSE 'unknown'
           END AS status_class,
-          ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS count
+          SUM(${HIT_WEIGHT_SQL})::double precision AS count
         FROM base GROUP BY status_class ORDER BY status_class
       ),
       sc_proj_rank AS (
@@ -636,7 +662,7 @@ export function createDbClient(databaseUrl: string) {
       ),
       status_codes AS (
         SELECT
-          b.status_code, ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS count,
+          b.status_code, SUM(${HIT_WEIGHT_SQL})::double precision AS count,
           COALESCE(MAX(pr.project_name) FILTER (WHERE pr.rank = 1), '') AS top_project,
           COALESCE(MAX(br.bot_name) FILTER (WHERE br.rank = 1), '') AS top_bot,
           COALESCE(MAX(pa.path) FILTER (WHERE pa.rank = 1), '') AS top_path,
@@ -660,7 +686,7 @@ export function createDbClient(databaseUrl: string) {
       ),
       project_statuses AS (
         SELECT
-          b.project_name AS project, b.status_code, ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS count,
+          b.project_name AS project, b.status_code, SUM(${HIT_WEIGHT_SQL})::double precision AS count,
           COALESCE(MAX(br.bot_name) FILTER (WHERE br.rank = 1), '') AS top_bot,
           COALESCE(MAX(pa.path) FILTER (WHERE pa.rank = 1), '') AS top_path,
           MAX(b.created_at)::text AS last_seen
@@ -679,14 +705,14 @@ export function createDbClient(databaseUrl: string) {
       ),
       bot_status_codes AS (
         SELECT
-          b.bot_name, b.bot_category, b.status_code, ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS count,
+          b.bot_name, b.bot_category, b.status_code, SUM(${HIT_WEIGHT_SQL})::double precision AS count,
           COALESCE(MAX(pr.project_name) FILTER (WHERE pr.rank = 1), '') AS top_project,
           COALESCE(MAX(pa.path) FILTER (WHERE pa.rank = 1), '') AS top_path,
           MAX(b.created_at)::text AS last_seen
         FROM base_scode b
         LEFT JOIN bsc_proj_rank pr ON pr.bot_name = b.bot_name AND pr.bot_category = b.bot_category AND pr.status_code = b.status_code AND pr.rank = 1
         LEFT JOIN bsc_path_rank pa ON pa.bot_name = b.bot_name AND pa.bot_category = b.bot_category AND pa.status_code = b.status_code AND pa.rank = 1
-        GROUP BY b.bot_name, b.bot_category, b.status_code ORDER BY count DESC, b.bot_name, b.status_code LIMIT ${botScLimit}
+        GROUP BY b.bot_name, b.bot_category, b.status_code ORDER BY count DESC, b.bot_name, b.status_code
       ),
       psc_bot_rank AS (
           SELECT project_name, path, status_code, bot_name, ROW_NUMBER() OVER (PARTITION BY project_name, path, status_code ORDER BY SUM(${HIT_WEIGHT_SQL}) DESC, bot_name) AS rank
@@ -694,7 +720,7 @@ export function createDbClient(databaseUrl: string) {
       ),
       page_status_codes AS (
         SELECT
-          b.project_name AS project, b.path, b.status_code, ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS count,
+          b.project_name AS project, b.path, b.status_code, SUM(${HIT_WEIGHT_SQL})::double precision AS count,
           COALESCE(MAX(br.bot_name) FILTER (WHERE br.rank = 1), '') AS top_bot,
           MAX(b.created_at)::text AS last_seen
         FROM base_scode b
@@ -702,7 +728,7 @@ export function createDbClient(databaseUrl: string) {
         GROUP BY b.project_name, b.path, b.status_code ORDER BY count DESC, b.project_name, b.path, b.status_code LIMIT ${otherLimit}
       ),
       failing AS (
-        SELECT * FROM base WHERE status_code >= 400
+        SELECT * FROM base WHERE status_code >= 400 AND status_code < 600
       ),
       fp_bot_rank AS (
           SELECT project_name, path, status_code, bot_name, ROW_NUMBER() OVER (PARTITION BY project_name, path, status_code ORDER BY SUM(${HIT_WEIGHT_SQL}) DESC, bot_name) AS rank
@@ -710,7 +736,7 @@ export function createDbClient(databaseUrl: string) {
       ),
       failing_paths AS (
         SELECT
-          f.project_name AS project, f.path, f.status_code, ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS count,
+          f.project_name AS project, f.path, f.status_code, SUM(${HIT_WEIGHT_SQL})::double precision AS count,
           COALESCE(MAX(br.bot_name) FILTER (WHERE br.rank = 1), '') AS top_bot,
           MAX(f.created_at)::text AS last_seen
         FROM failing f
@@ -725,16 +751,17 @@ export function createDbClient(databaseUrl: string) {
       bot_statuses AS (
         SELECT
           b.bot_name, b.bot_category,
-          ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS total_hits,
-          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE b.status_code >= 400)), 0)::int AS error_hits,
-          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE b.confidence = 'ua_only')), 0)::int AS ua_only_hits,
+          SUM(${HIT_WEIGHT_SQL})::double precision AS total_hits,
+          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE b.status_code >= 200 AND b.status_code < 600), 0)::double precision AS known_status_hits,
+          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE b.status_code >= 400 AND b.status_code < 600), 0)::double precision AS error_hits,
+          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE b.confidence = 'ua_only'), 0)::double precision AS ua_only_hits,
           COALESCE(MAX(ts.status_code) FILTER (WHERE ts.rank = 1), 0)::int AS top_status_code,
           MAX(b.created_at)::text AS last_seen
         FROM base b
         LEFT JOIN bot_top_status ts ON ts.bot_name = b.bot_name AND ts.bot_category = b.bot_category AND ts.rank = 1
         GROUP BY b.bot_name, b.bot_category
-        HAVING SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE b.status_code >= 400) > 0 OR SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE b.confidence = 'ua_only') > 0
-        ORDER BY error_hits DESC, ua_only_hits DESC, total_hits DESC LIMIT ${scLimit}
+        HAVING SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE b.status_code >= 400 AND b.status_code < 600) > 0 OR SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE b.confidence = 'ua_only') > 0
+        ORDER BY error_hits DESC, ua_only_hits DESC, total_hits DESC
       ),
       sensitive AS (
         SELECT * FROM base
@@ -752,7 +779,7 @@ export function createDbClient(databaseUrl: string) {
       ),
       sensitive_hits AS (
         SELECT
-          s.project_name AS project, s.path, ROUND(SUM(${HIT_WEIGHT_SQL}))::int AS count,
+          s.project_name AS project, s.path, SUM(${HIT_WEIGHT_SQL})::double precision AS count,
           COALESCE(MAX(br.bot_name) FILTER (WHERE br.rank = 1), '') AS top_bot,
           MAX(s.created_at)::text AS last_seen
         FROM sensitive s
@@ -776,7 +803,7 @@ export function createDbClient(databaseUrl: string) {
     const parse = <T,>(v: unknown): T => (typeof v === "string" ? JSON.parse(v) as T : v as T);
 
     const rawBotStatusCodes = parse<{ bot_name: string; bot_category: string; status_code: number; count: number; top_project: string; top_path: string; last_seen: string }[]>(row.bot_status_codes_json);
-    const rawBotStatuses = parse<{ bot_name: string; bot_category: string; total_hits: number; error_hits: number; ua_only_hits: number; top_status_code: number; last_seen: string }[]>(row.bot_statuses_json);
+    const rawBotStatuses = parse<{ bot_name: string; bot_category: string; total_hits: number; error_hits: number; known_status_hits: number; ua_only_hits: number; top_status_code: number; last_seen: string }[]>(row.bot_statuses_json);
 
     return {
       summary: parse<StatusSummary>(row.summary_json),
@@ -805,7 +832,7 @@ export function createDbClient(databaseUrl: string) {
       botStatuses: (() => {
         const map = new Map<string, {
           bot_name: string; bot_category: BotCategory; total_hits: number;
-          error_hits: number; ua_only_hits: number; top_status_code: number; last_seen: string;
+          error_hits: number; known_status_hits: number; ua_only_hits: number; top_status_code: number; last_seen: string;
         }>();
         for (const r of rawBotStatuses) {
           const cat = normalizeBotCategory(r.bot_name, r.bot_category) as BotCategory;
@@ -814,6 +841,7 @@ export function createDbClient(databaseUrl: string) {
           if (cur) {
             cur.total_hits += r.total_hits;
             cur.error_hits += r.error_hits;
+            cur.known_status_hits += r.known_status_hits;
             cur.ua_only_hits += r.ua_only_hits;
             if (r.last_seen > cur.last_seen) { cur.last_seen = r.last_seen; cur.top_status_code = r.top_status_code; }
           } else {
@@ -835,46 +863,46 @@ export function createDbClient(databaseUrl: string) {
     }
     const categoryClause = categoryFilterSql(category, values);
 
-    // bot_conf_ai_all exists so the "AI crawls vs. visits" panel can show the
+    // bot_conf_ai_all exists so the "AI crawls and user-triggered fetches" panel can show the
     // full AI space even when a single AI chip is selected. When no chip is
     // selected, base_nocat === base so bot_conf_ai_all === bot_conf_ai and we
     // skip the extra bot_hits scan entirely (the JS layer falls back to
-    // aiBotsWithConfidence for crawls-vs-visits). Both CTEs are conditional
+    // aiBotsWithConfidence for crawl/fetch comparison). Both CTEs are conditional
     // together because bot_conf_ai_all references base_nocat.
     const hasCategoryFilter = categoryClause.length > 0;
     const baseNocatCte = hasCategoryFilter ? `,
       base_nocat AS (
         SELECT bot_name, bot_category, confidence, project_name, path, status_code, created_at, sample_rate
         FROM bot_hits
-        WHERE created_at > $1
-          AND created_at <= $2
+        WHERE created_at >= $1
+          AND created_at < $2
           AND heartbeat = FALSE
           ${projectClause}
       )` : "";
     const botConfAiAllCte = hasCategoryFilter ? `,
       -- AI bot aggregation reading from base_nocat (no category chip filter,
       -- project-scoped). Carries every AI category together so the "AI crawls
-      -- vs. visits" panel can contrast crawls AND visits even when a single AI
+      -- vs. fetches" panel can contrast crawls AND fetches even when a single AI
       -- chip filters the per-bot breakdown above.
       bot_conf_ai_all AS (
         SELECT bot_name, bot_category,
-          ROUND(SUM(${HIT_WEIGHT_SQL}))::int as total_hits,
-          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified')), 0)::int as verified_hits,
-          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'ua_only')), 0)::int as ua_only_hits,
+          SUM(${HIT_WEIGHT_SQL})::double precision as total_hits,
+          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified'), 0)::double precision as verified_hits,
+          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'ua_only'), 0)::double precision as ua_only_hits,
           STRING_AGG(DISTINCT project_name, ', ' ORDER BY project_name) as projects,
           MAX(created_at)::text as last_seen
         FROM base_nocat
         WHERE bot_category IN (${AI_CAT_SQL})
           OR bot_name IN (${AI_BOT_NAMES_SQL})
-        GROUP BY bot_name, bot_category ORDER BY total_hits DESC LIMIT 50
+        GROUP BY bot_name, bot_category ORDER BY total_hits DESC
       )` : "";
 
     const result = await sql.unsafe(`
       WITH base AS (
         SELECT bot_name, bot_category, confidence, project_name, path, status_code, created_at, sample_rate
         FROM bot_hits
-        WHERE created_at > $1
-          AND created_at <= $2
+        WHERE created_at >= $1
+          AND created_at < $2
           AND heartbeat = FALSE
           ${projectClause}
           ${categoryClause}
@@ -884,61 +912,59 @@ export function createDbClient(databaseUrl: string) {
       ),
       total AS (
         SELECT
-          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL})), 0)::int as count,
-          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code >= 400)), 0)::int as error_count,
-          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code > 0)), 0)::int as known_status_count
+          COALESCE(SUM(${HIT_WEIGHT_SQL}), 0)::double precision as count,
+          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code >= 400 AND status_code < 600), 0)::double precision as error_count,
+          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code >= 200 AND status_code < 600), 0)::double precision as known_status_count
         FROM base
       ),
       top_bots AS (
         -- Grouped by (bot_name, bot_category) and merged in JS by normalized
-        -- category afterward (topBotsTotals below) — double the raw limit so
-        -- a bot split across ai_agent/legacy ai_crawler rows doesn't lose a
-        -- slot to its own pre-merge duplicate (mirrors allBotDetails' LIMIT * 2).
-        SELECT bot_name, bot_category, ROUND(SUM(${HIT_WEIGHT_SQL}))::int as count
-        FROM base GROUP BY bot_name, bot_category ORDER BY count DESC LIMIT 20
+        -- category afterward (topBotsTotals below). Keep every row until
+        -- merging so legacy duplicates cannot displace a canonical bot.
+        SELECT bot_name, bot_category, SUM(${HIT_WEIGHT_SQL})::double precision as count
+        FROM base GROUP BY bot_name, bot_category ORDER BY count DESC
       ),
       top_pages AS (
-        SELECT path, ROUND(SUM(${HIT_WEIGHT_SQL}))::int as count
+        SELECT path, SUM(${HIT_WEIGHT_SQL})::double precision as count
         FROM base GROUP BY path ORDER BY count DESC LIMIT 10
       ),
       daily AS (
-        SELECT DATE(created_at)::text as date, ROUND(SUM(${HIT_WEIGHT_SQL}))::int as count
+        SELECT DATE(created_at)::text as date, SUM(${HIT_WEIGHT_SQL})::double precision as count
         FROM base GROUP BY DATE(created_at) ORDER BY date
       ),
       daily_cats AS (
-        SELECT DATE(created_at)::text as date, bot_name, bot_category, ROUND(SUM(${HIT_WEIGHT_SQL}))::int as count
+        SELECT DATE(created_at)::text as date, bot_name, bot_category, SUM(${HIT_WEIGHT_SQL})::double precision as count
         FROM base GROUP BY DATE(created_at), bot_name, bot_category ORDER BY date
       ),
       projects AS (
-        SELECT project_name as project, ROUND(SUM(${HIT_WEIGHT_SQL}))::int as count
+        SELECT project_name as project, SUM(${HIT_WEIGHT_SQL})::double precision as count
         FROM base_proj GROUP BY project_name ORDER BY count DESC
       ),
       categories_raw AS (
-        SELECT bot_name, bot_category, ROUND(SUM(${HIT_WEIGHT_SQL}))::int as count
+        SELECT bot_name, bot_category, SUM(${HIT_WEIGHT_SQL})::double precision as count
         FROM base GROUP BY bot_name, bot_category ORDER BY count DESC
       ),
       bot_conf_all AS (
-        -- Same pre-merge/post-merge mismatch as top_bots above — double the
-        -- raw limit to compensate.
+        -- Merge all canonical identities in JS before presentation limits.
         SELECT bot_name, bot_category,
-          ROUND(SUM(${HIT_WEIGHT_SQL}))::int as total_hits,
-          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified')), 0)::int as verified_hits,
-          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'ua_only')), 0)::int as ua_only_hits,
+          SUM(${HIT_WEIGHT_SQL})::double precision as total_hits,
+          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified'), 0)::double precision as verified_hits,
+          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'ua_only'), 0)::double precision as ua_only_hits,
           STRING_AGG(DISTINCT project_name, ', ' ORDER BY project_name) as projects,
           MAX(created_at)::text as last_seen
-        FROM base GROUP BY bot_name, bot_category ORDER BY total_hits DESC LIMIT 20
+        FROM base GROUP BY bot_name, bot_category ORDER BY total_hits DESC
       ),
       bot_conf_ai AS (
         SELECT bot_name, bot_category,
-          ROUND(SUM(${HIT_WEIGHT_SQL}))::int as total_hits,
-          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified')), 0)::int as verified_hits,
-          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'ua_only')), 0)::int as ua_only_hits,
+          SUM(${HIT_WEIGHT_SQL})::double precision as total_hits,
+          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified'), 0)::double precision as verified_hits,
+          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'ua_only'), 0)::double precision as ua_only_hits,
           STRING_AGG(DISTINCT project_name, ', ' ORDER BY project_name) as projects,
           MAX(created_at)::text as last_seen
         FROM base
         WHERE bot_category IN (${AI_CAT_SQL})
           OR bot_name IN (${AI_BOT_NAMES_SQL})
-        GROUP BY bot_name, bot_category ORDER BY total_hits DESC LIMIT 50
+        GROUP BY bot_name, bot_category ORDER BY total_hits DESC
       )${botConfAiAllCte},
       ps_bot_rank AS (
         SELECT project_name, bot_name,
@@ -952,13 +978,13 @@ export function createDbClient(databaseUrl: string) {
       ),
       proj_agg AS (
         SELECT project_name as project,
-          ROUND(SUM(${HIT_WEIGHT_SQL}))::int as total_hits,
+          SUM(${HIT_WEIGHT_SQL})::double precision as total_hits,
           COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (
             WHERE bot_category IN (${AI_CAT_SQL})
                OR bot_name IN (${AI_BOT_NAMES_SQL})
           )), 0)::int as ai_hits,
-          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified')), 0)::int as verified_hits,
-          COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'ua_only')), 0)::int as ua_only_hits,
+          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified'), 0)::double precision as verified_hits,
+          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'ua_only'), 0)::double precision as ua_only_hits,
           MAX(created_at)::text as last_seen
         FROM base_proj
         GROUP BY project_name
@@ -973,7 +999,7 @@ export function createDbClient(databaseUrl: string) {
         ORDER BY pa.total_hits DESC
       ),
       tpp_pc AS (
-        SELECT project_name, path, ROUND(SUM(${HIT_WEIGHT_SQL}))::int as count, MAX(created_at)::text as last_seen
+        SELECT project_name, path, SUM(${HIT_WEIGHT_SQL})::double precision as count, MAX(created_at)::text as last_seen
         FROM base_proj GROUP BY project_name, path
       ),
       tpp_bc AS (
@@ -991,11 +1017,11 @@ export function createDbClient(databaseUrl: string) {
       -- New bots first seen inside [from, to]. Intentionally global (not scoped
       -- by project/category, which this query's $3+ params encode) — a bot is
       -- either new to the whole system or it isn't; that's what "new" means for
-      -- the attention strip, regardless of which project/category is filtered.
+      -- the attention strip; JS suppresses it under any project/category filter.
       new_bots AS (
         SELECT bot_name, first_seen::text AS first_seen
         FROM bot_first_seen
-        WHERE first_seen >= $1 AND first_seen <= $2
+        WHERE first_seen >= $1 AND first_seen < $2
       )
       SELECT
         (SELECT count FROM total) as total_count,
@@ -1062,9 +1088,9 @@ export function createDbClient(databaseUrl: string) {
     }
     const categories = Array.from(catTotals.entries()).map(([bot_category, count]) => ({ bot_category: bot_category as BotCategory, count })).sort((a, b) => b.count - a.count);
 
-    const topBotsWithConfidence = rawBotConfAll.map(r => ({ ...r, bot_category: normalizeBotCategory(r.bot_name, r.bot_category) as BotCategory })).sort((a, b) => b.total_hits - a.total_hits).slice(0, 10);
-    const aiBotsWithConfidence = rawBotConfAi.map(r => ({ ...r, bot_category: normalizeBotCategory(r.bot_name, r.bot_category) as BotCategory })).sort((a, b) => b.total_hits - a.total_hits);
-    const aiBotsAllWithConfidence = rawBotConfAiAll.map(r => ({ ...r, bot_category: normalizeBotCategory(r.bot_name, r.bot_category) as BotCategory })).sort((a, b) => b.total_hits - a.total_hits);
+    const topBotsWithConfidence = mergeBotConfidence(rawBotConfAll).slice(0, 10);
+    const aiBotsWithConfidence = mergeBotConfidence(rawBotConfAi);
+    const aiBotsAllWithConfidence = mergeBotConfidence(rawBotConfAiAll);
 
     return {
       topBots,
@@ -1081,7 +1107,7 @@ export function createDbClient(databaseUrl: string) {
       aiBotsAllWithConfidence,
       topPagesByProject: parseJson<ProjectPageCount[]>(row.tpp_json),
       categories,
-      newBots: parseJson<NewBot[]>(row.new_bots_json),
+      newBots: project || category ? [] : parseJson<NewBot[]>(row.new_bots_json),
     };
   }
 
@@ -1091,7 +1117,7 @@ export function createDbClient(databaseUrl: string) {
   // date, so we compare against the UTC date of each boundary.
   async function fetchRollupStats(from: Date, to: Date, project?: string, category?: string) {
     const fromDay = from.toISOString().slice(0, 10);
-    const toDay = to.toISOString().slice(0, 10);
+    const toDay = new Date(to.getTime() - 1).toISOString().slice(0, 10);
     const values: (string | number)[] = [fromDay, toDay];
     let projectClause = "";
     if (project) {
@@ -1119,12 +1145,12 @@ export function createDbClient(databaseUrl: string) {
           SUM(base_nocat.verified_hits)::int as verified_hits,
           (SUM(base_nocat.hits) - SUM(base_nocat.verified_hits))::int as ua_only_hits,
           STRING_AGG(DISTINCT base_nocat.project_name, ', ' ORDER BY base_nocat.project_name) as projects,
-          COALESCE(MAX(bfs.last_seen)::text, '') as last_seen
+          MAX(base_nocat.day)::text as last_seen
         FROM base_nocat
         LEFT JOIN bot_first_seen bfs ON bfs.bot_name = base_nocat.bot_name
         WHERE base_nocat.bot_category IN (${AI_CAT_SQL})
           OR base_nocat.bot_name IN (${AI_BOT_NAMES_SQL})
-        GROUP BY base_nocat.bot_name, base_nocat.bot_category ORDER BY total_hits DESC LIMIT 50
+        GROUP BY base_nocat.bot_name, base_nocat.bot_category ORDER BY total_hits DESC
       )` : "";
 
     const result = await sql.unsafe(`
@@ -1152,7 +1178,7 @@ export function createDbClient(databaseUrl: string) {
       ),
       daily_status AS (
         SELECT day::text AS date, status_class, SUM(hits)::int AS count
-        FROM base WHERE status_class != 'unknown'
+        FROM base
         GROUP BY day, status_class ORDER BY day, status_class
       ),
       categories_raw AS (
@@ -1165,11 +1191,11 @@ export function createDbClient(databaseUrl: string) {
         SELECT b.bot_name, b.bot_category,
           SUM(b.hits)::int AS total_hits,
           SUM(b.verified_hits)::int AS verified_hits,
-          COALESCE(MAX(bfs.last_seen)::text, '') AS last_seen
+          MAX(b.day)::text AS last_seen
         FROM base b
         LEFT JOIN bot_first_seen bfs ON bfs.bot_name = b.bot_name
         GROUP BY b.bot_name, b.bot_category
-        ORDER BY total_hits DESC LIMIT 20
+        ORDER BY total_hits DESC
       ),
       -- neo-mirror of fetchStatsBatch.bot_conf_ai: per-bot AI aggregation
       -- scoped by the chip filter (base) for the AI per-bot breakdown panel.
@@ -1179,12 +1205,12 @@ export function createDbClient(databaseUrl: string) {
           SUM(base.verified_hits)::int as verified_hits,
           (SUM(base.hits) - SUM(base.verified_hits))::int as ua_only_hits,
           STRING_AGG(DISTINCT base.project_name, ', ' ORDER BY base.project_name) as projects,
-          COALESCE(MAX(bfs.last_seen)::text, '') as last_seen
+          MAX(base.day)::text as last_seen
         FROM base
         LEFT JOIN bot_first_seen bfs ON bfs.bot_name = base.bot_name
         WHERE base.bot_category IN (${AI_CAT_SQL})
           OR base.bot_name IN (${AI_BOT_NAMES_SQL})
-        GROUP BY base.bot_name, base.bot_category ORDER BY total_hits DESC LIMIT 50
+        GROUP BY base.bot_name, base.bot_category ORDER BY total_hits DESC
       )${baseNocatCte}${botConfAiAllCte}
       SELECT
         (SELECT count FROM total) AS total_count,
@@ -1260,8 +1286,8 @@ export function createDbClient(databaseUrl: string) {
     const rawBotConfAiAll = hasCategoryFilter
       ? parseJson<BotConfidenceCount[]>(row.bot_conf_ai_all_json)
       : rawBotConfAi;
-    const aiBotsWithConfidence = rawBotConfAi.map((r) => ({ ...r, bot_category: normalizeBotCategory(r.bot_name, r.bot_category) as BotCategory })).sort((a, b) => b.total_hits - a.total_hits);
-    const aiBotsAllWithConfidence = rawBotConfAiAll.map((r) => ({ ...r, bot_category: normalizeBotCategory(r.bot_name, r.bot_category) as BotCategory })).sort((a, b) => b.total_hits - a.total_hits);
+    const aiBotsWithConfidence = mergeBotConfidence(rawBotConfAi);
+    const aiBotsAllWithConfidence = mergeBotConfidence(rawBotConfAiAll);
 
     return {
       total: (row.total_count as number) ?? 0,
@@ -1280,9 +1306,18 @@ export function createDbClient(databaseUrl: string) {
   // Rollup-backed equivalent of allBotDetails, for long-range views. Per-bot
   // hits/verified come from bot_hits_daily; first_seen/last_seen come from
   // bot_first_seen (exact, not bounded by the query range).
-  async function allBotDetailsRollup(from: Date, to: Date, project?: string, limit = 100): Promise<RollupBotDetail[]> {
+  async function botDailyRollup(botName: string, from: Date, to: Date, project?: string, category?: string): Promise<DailyCount[]> {
+    const values: (string | number)[] = [botName, from.toISOString().slice(0, 10), new Date(to.getTime() - 1).toISOString().slice(0, 10)];
+    const projectClause = project ? `AND project_name = $${values.push(project)}` : "";
+    const categoryClause = categoryFilterSql(category, values);
+    return sql.unsafe(`SELECT day::text AS date, SUM(hits)::int AS count FROM bot_hits_daily
+      WHERE bot_name = $1 AND day >= $2::date AND day <= $3::date ${projectClause} ${categoryClause}
+      GROUP BY day ORDER BY day`, values) as unknown as Promise<DailyCount[]>;
+  }
+
+  async function allBotDetailsRollup(from: Date, to: Date, project?: string): Promise<RollupBotDetail[]> {
     const fromDay = from.toISOString().slice(0, 10);
-    const toDay = to.toISOString().slice(0, 10);
+    const toDay = new Date(to.getTime() - 1).toISOString().slice(0, 10);
     const values: (string | number)[] = [fromDay, toDay];
     let projectClause = "";
     if (project) {
@@ -1297,7 +1332,7 @@ export function createDbClient(databaseUrl: string) {
         SUM(d.hits)::int AS total_hits,
         SUM(d.verified_hits)::int AS verified_hits,
         STRING_AGG(DISTINCT d.project_name, ', ' ORDER BY d.project_name) AS projects,
-        COALESCE(MAX(bfs.last_seen)::text, '') AS last_seen,
+        MAX(d.day)::text AS last_seen,
         COALESCE(MAX(bfs.first_seen)::text, '') AS first_seen
       FROM bot_hits_daily d
       LEFT JOIN bot_first_seen bfs ON bfs.bot_name = d.bot_name
@@ -1305,7 +1340,7 @@ export function createDbClient(databaseUrl: string) {
         ${projectClause}
       GROUP BY d.bot_name, d.bot_category
       ORDER BY total_hits DESC
-      LIMIT ${limit * 2}
+
     `, values) as unknown as RollupBotDetail[];
 
     // Merge raw category variants that normalize to the same category, same
@@ -1334,7 +1369,7 @@ export function createDbClient(databaseUrl: string) {
         first_seen: row.first_seen && (!current.first_seen || new Date(row.first_seen) < new Date(current.first_seen)) ? row.first_seen : current.first_seen,
       });
     }
-    return Array.from(totals.values()).sort((a, b) => b.total_hits - a.total_hits).slice(0, limit);
+    return Array.from(totals.values()).sort((a, b) => b.total_hits - a.total_hits);
   }
 
   async function fetchMeta(project?: string) {
@@ -1348,15 +1383,24 @@ export function createDbClient(databaseUrl: string) {
             SELECT project_name FROM bot_hits WHERE heartbeat = FALSE AND project_name != ''
             UNION
             SELECT project_name FROM project_health WHERE project_name != ''
+            UNION
+            SELECT project_name FROM bot_hits_daily WHERE project_name != ''
+            UNION
+            SELECT project_name FROM project_receipts WHERE project_name != ''
           ) projects ORDER BY project_name
         ) t), '[]') as projects_json,
         (SELECT MAX(last_heartbeat_at) FROM project_health WHERE project_name != '' ${projectClause}) as latest_heartbeat,
-        (SELECT MAX(created_at) FROM bot_hits WHERE heartbeat = FALSE ${projectClause}) as latest_event
+        (SELECT MAX(created_at) FROM bot_hits WHERE heartbeat = FALSE ${projectClause}) as latest_event,
+        COALESCE((SELECT pruned_before::text FROM raw_retention_state WHERE singleton = TRUE),
+          (SELECT CASE WHEN MIN(day) < COALESCE((SELECT MIN(created_at)::date FROM bot_hits WHERE heartbeat = FALSE ${projectClause}), 'infinity'::date)
+            THEN COALESCE((SELECT MIN(created_at)::date FROM bot_hits WHERE heartbeat = FALSE ${projectClause}), MAX(day) + 1)::text END
+           FROM bot_hits_daily WHERE TRUE ${projectClause})) as raw_detail_from
     `, values);
 
     const row = (result as Record<string, unknown>[])[0];
     return {
-      allProjects: typeof row.projects_json === "string" ? JSON.parse(row.projects_json) as string[] : (row.projects_json as string[]),
+      allProjects: Array.from(new Set([...(typeof row.projects_json === "string" ? JSON.parse(row.projects_json) as string[] : row.projects_json as string[]), ...getIngestionConfig().credentials.map((c) => c.projectName).filter((p): p is string => Boolean(p))])).sort(),
+      rawDetailFrom: row.raw_detail_from ? new Date(`${row.raw_detail_from}T00:00:00Z`) : null,
       latestHeartbeat: row.latest_heartbeat ? new Date(row.latest_heartbeat as string) : null,
       latestEvent: row.latest_event ? new Date(row.latest_event as string) : null,
     };
@@ -1370,6 +1414,7 @@ export function createDbClient(databaseUrl: string) {
     insertHit,
     queryFiltered,
     hourlyCounts,
+    chronologicalHourlyCounts,
     allBotDetails,
     movers,
     botDetailReport,
@@ -1379,8 +1424,11 @@ export function createDbClient(databaseUrl: string) {
     fetchStatsBatch,
     fetchMeta,
     upsertProjectHeartbeat,
+    recordConnectionReceipt,
+    projectDelivery,
     fetchRollupStats,
     allBotDetailsRollup,
+    botDailyRollup,
     close,
   };
 }

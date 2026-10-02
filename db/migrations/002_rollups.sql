@@ -28,7 +28,7 @@ SELECT DATE(created_at), project_name, bot_name, bot_category,
        CASE WHEN status_code >= 200 AND status_code < 300 THEN '2xx'
             WHEN status_code >= 300 AND status_code < 400 THEN '3xx'
             WHEN status_code >= 400 AND status_code < 500 THEN '4xx'
-            WHEN status_code >= 500 THEN '5xx' ELSE 'unknown' END,
+            WHEN status_code >= 500 AND status_code < 600 THEN '5xx' ELSE 'unknown' END,
        COALESCE(ROUND(SUM(1.0 / NULLIF(sample_rate, 0))), 0),
        COALESCE(ROUND(SUM(1.0 / NULLIF(sample_rate, 0)) FILTER (WHERE confidence = 'verified')), 0)
 FROM bot_hits WHERE heartbeat = FALSE

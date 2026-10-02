@@ -130,7 +130,7 @@ export function StackedBotChart({
 }
 
 function periodLabel(period: string, granularity: "day" | "week" | "month") {
-  const date = new Date(period + "T00:00:00");
+  const date = new Date(period + "T00:00:00Z");
   if (granularity === "month") {
     return date.toLocaleDateString("en-US", { month: "short", year: "2-digit", timeZone: "UTC" });
   }

@@ -1,4 +1,7 @@
 import postgres from "postgres";
+import { loadEnv } from "./env.mjs";
+
+loadEnv();
 
 // Optional scheduled cleanup for the append-only raw table. Daily rollups,
 // first/last-seen data, and project health are intentionally untouched.
@@ -22,6 +25,10 @@ if (!url || !Number.isInteger(retentionDays) || retentionDays < 1 || !Number.isI
 const sql = postgres(url, { max: 1, connection: { timezone: "UTC" } });
 
 try {
+  // Record the boundary before the first batch: even a partially completed
+  // cleanup must never let reconciliation replace the pruned interval.
+  const [boundary] = await sql`SELECT (date_trunc('day', now() AT TIME ZONE 'UTC') - (${retentionDays} * INTERVAL '1 day'))::date::text AS cutoff`;
+  await sql`UPDATE raw_retention_state SET complete_from = GREATEST(complete_from, ${boundary.cutoff}::date), pruned_before = GREATEST(pruned_before, ${boundary.cutoff}::date), updated_at = now() WHERE singleton = TRUE`;
   let removed = 0;
   while (true) {
     const result = await sql`
@@ -29,7 +36,7 @@ try {
       WHERE id IN (
         SELECT id
         FROM bot_hits
-        WHERE created_at < now() - (${retentionDays} * INTERVAL '1 day')
+        WHERE created_at < ${boundary.cutoff}::date
         ORDER BY created_at, id
         LIMIT ${batchSize}
       )
@@ -38,7 +45,7 @@ try {
     removed += count;
     if (count < batchSize) break;
   }
-  console.log(`removed ${removed} raw event(s) older than ${retentionDays} day(s) in batches of ${batchSize}`);
+  console.log(`removed ${removed} raw event(s) before ${boundary.cutoff} 00:00 UTC in batches of ${batchSize}; daily history preserved`);
 } finally {
   await sql.end();
 }

@@ -1,10 +1,9 @@
+import type { DashboardRange } from "@/lib/period";
 import Link from "next/link";
 import { getDb } from "@/app/dashboard/db";
 import {
   statsCache,
   STATS_CACHE_TTL_MS,
-  roundToInterval,
-  resolvePeriodRange,
   eventHref,
   botHref,
   pct,
@@ -18,7 +17,6 @@ import {
   statusClassTone,
   statusClassLabel,
   LongRangeCaption,
-  LONG_RANGE_THRESHOLD_DAYS,
 } from "@/app/dashboard/shared";
 import { BotName } from "@/components/bot-name";
 import { StatusTrendChart } from "@/components/charts/status-trend-chart";
@@ -50,19 +48,19 @@ async function getRollupStatusData(db: DbClient, from: Date, to: Date, projectFi
 
 export async function HealthViewServer({
   period,
-  periodDays,
+  range,
   projectFilter,
   categoryFilter,
 }: {
   period: string;
   periodDays: number;
+  range: DashboardRange;
   projectFilter?: string;
   categoryFilter?: string;
 }) {
   const db = getDb();
-  const now = roundToInterval(new Date(), STATS_CACHE_TTL_MS);
-  const { start: from, end: to } = resolvePeriodRange(period, now);
-  const isLongRange = periodDays > LONG_RANGE_THRESHOLD_DAYS;
+  const { start: from, end: to } = range;
+  const isLongRange = range.aggregate;
 
   if (isLongRange) {
     // Long-range mode: bot_hits_daily has no path/sensitive-path measure, so
@@ -87,13 +85,13 @@ export async function HealthViewServer({
       <div className="space-y-4">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <StatTile label="Known status" value={`${pct(rollup.knownStatusHits, rollup.total)}%`} detail={`${rollup.knownStatusHits.toLocaleString()} of ${rollup.total.toLocaleString()} hits`} />
-          <StatTile label="Error rate" value={`${pct(rollup.errorHits, rollup.knownStatusHits)}%`} detail={`${rollup.errorHits.toLocaleString()} 4xx/5xx hits`} accent={errorRateAccent(pct(rollup.errorHits, rollup.knownStatusHits))} />
+          <StatTile label="Error rate" value={rollup.knownStatusHits > 0 ? `${pct(rollup.errorHits, rollup.knownStatusHits)}%` : "Unknown"} detail={`${rollup.errorHits.toLocaleString()} 4xx/5xx hits`} accent={errorRateAccent(pct(rollup.errorHits, rollup.knownStatusHits))} />
           <StatTile label="4xx hits" value={clientErrorHits.toLocaleString()} detail="Client errors" accent={clientErrorHits > 0 ? "text-orange-300" : "text-neutral-300"} />
           <StatTile label="5xx hits" value={serverErrorHits.toLocaleString()} detail="Server errors" accent={serverErrorHits > 0 ? "text-rose-300" : "text-neutral-300"} />
         </div>
 
         <Panel title="Status trend" eyebrow="daily, stacked by class">
-          <StatusTrendChart data={rollup.dailyStatus} />
+          <StatusTrendChart data={rollup.dailyStatus} from={from} to={to} />
         </Panel>
 
         <Panel title="Status classes" eyebrow="response mix">
@@ -132,14 +130,14 @@ export async function HealthViewServer({
     <div className="space-y-4">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <StatTile label="Known status" value={`${pct(summary.known_status_hits, summary.total_hits)}%`} detail={`${summary.known_status_hits.toLocaleString()} of ${summary.total_hits.toLocaleString()} hits`} accent={knownStatusAccent(pct(summary.known_status_hits, summary.total_hits))} />
-        <StatTile label="Error rate" value={`${pct(errorHits, summary.known_status_hits)}%`} detail={`${errorHits.toLocaleString()} 4xx/5xx hits`} accent={errorRateAccent(pct(errorHits, summary.known_status_hits))} />
+        <StatTile label="Error rate" value={summary.known_status_hits > 0 ? `${pct(errorHits, summary.known_status_hits)}%` : "Unknown"} detail={`${errorHits.toLocaleString()} 4xx/5xx hits`} accent={errorRateAccent(pct(errorHits, summary.known_status_hits))} />
         <StatTile label="4xx hits" value={summary.client_error_hits.toLocaleString()} detail="Client errors" accent={summary.client_error_hits > 0 ? "text-orange-300" : "text-neutral-300"} />
         <StatTile label="5xx hits" value={summary.server_error_hits.toLocaleString()} detail="Server errors" accent={summary.server_error_hits > 0 ? "text-rose-300" : "text-neutral-300"} />
         <StatTile label="Sensitive paths" value={summary.sensitive_path_hits.toLocaleString()} detail="Admin/login/.env/API patterns" accent={summary.sensitive_path_hits > 0 ? "text-orange-300" : "text-neutral-300"} />
       </div>
 
       <Panel title="Status trend" eyebrow="daily, stacked by class">
-        <StatusTrendChart data={dailyStatus} />
+        <StatusTrendChart data={dailyStatus} from={from} to={to} />
       </Panel>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[0.85fr_1.15fr]">
@@ -172,7 +170,7 @@ export async function HealthViewServer({
               {statusCodes.map((row) => (
                 <span
                   key={row.status_code}
-                  className="inline-flex items-center gap-1.5 rounded border border-neutral-800 bg-neutral-950 px-2 py-1 text-[11px]"
+                  className="inline-flex items-center gap-1.5 rounded border border-neutral-800 bg-neutral-950 px-2 py-1 text-xs"
                   title={`Top: ${row.top_project || "-"} · ${row.top_bot || "-"} · ${row.top_path || "-"}`}
                 >
                   <StatusCodeChip statusCode={row.status_code} />
@@ -191,13 +189,14 @@ export async function HealthViewServer({
           pageStatusCodes={pageStatusCodes}
           period={period}
           projectFilter={projectFilter}
+          categoryFilter={categoryFilter}
         />
       </Panel>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Panel title="Bots with errors or UA-only hits" eyebrow="triage" meta={`${botStatuses.length} bots`}>
+        <Panel title="Bot outcomes and DNS coverage" eyebrow="request evidence" meta={`${botStatuses.length} bots`}>
           {botStatuses.length === 0 ? (
-            <p className="text-sm text-neutral-500">No bot status issues in this period.</p>
+            <p className="text-sm text-neutral-500">No error or UA-only requests in this selection.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
@@ -215,11 +214,11 @@ export async function HealthViewServer({
                   {botStatuses.map((bot) => (
                     <tr key={`${bot.bot_name}:${bot.bot_category}`} className="border-t border-neutral-800 hover:bg-neutral-900">
                       <td className="px-2 py-2 font-medium text-neutral-100">
-                        <BotName name={bot.bot_name} href={botHref({ bot: bot.bot_name, project: projectFilter, period })} className="hover:text-white" />
+                        <BotName name={bot.bot_name} href={botHref({ bot: bot.bot_name, project: projectFilter, category: categoryFilter, period })} className="hover:text-white" />
                       </td>
                       <td className="px-2 py-2"><NormalizedCategoryChip botName={bot.bot_name} category={bot.bot_category} /></td>
                       <td className="px-2 py-2 text-right font-mono text-orange-300">{bot.error_hits.toLocaleString()}</td>
-                      <td className="px-2 py-2 text-right font-mono text-neutral-400">{pct(bot.error_hits, bot.total_hits)}%</td>
+                      <td className="px-2 py-2 text-right font-mono text-neutral-400">{bot.known_status_hits > 0 ? `${pct(bot.error_hits, bot.known_status_hits)}%` : "Unknown"} · {pct(bot.known_status_hits, bot.total_hits)}% coverage</td>
                       <td className="px-2 py-2 text-right font-mono text-amber-300">{bot.ua_only_hits.toLocaleString()}</td>
                       <td className="px-2 py-2 text-right"><StatusCodeChip statusCode={bot.top_status_code} /></td>
                     </tr>
@@ -236,7 +235,7 @@ export async function HealthViewServer({
           ) : (
             <div className="space-y-1">
               {failingPaths.map((path) => (
-                <Link key={`${path.project}:${path.status_code}:${path.path}`} href={eventHref({ project: path.project, path: path.path, period })} className="block rounded border border-neutral-800/90 bg-neutral-950 px-3 py-2 hover:bg-neutral-900/70">
+                <Link key={`${path.project}:${path.status_code}:${path.path}`} href={eventHref({ project: path.project, path: path.path, category: categoryFilter, period })} className="block rounded border border-neutral-800/90 bg-neutral-950 px-3 py-2 hover:bg-neutral-900/70">
                   <div className="flex items-center justify-between gap-3">
                     <span className="min-w-0">
                       <span className="block truncate font-mono text-xs text-neutral-100">{path.path}</span>
@@ -260,7 +259,7 @@ export async function HealthViewServer({
         ) : (
           <div className="space-y-1">
             {sensitiveHits.map((hit) => (
-              <Link key={`${hit.project}:${hit.path}`} href={eventHref({ project: hit.project, path: hit.path, period })} className="block rounded border border-neutral-800/90 bg-neutral-950 px-3 py-2 hover:bg-neutral-900/70">
+              <Link key={`${hit.project}:${hit.path}`} href={eventHref({ project: hit.project, path: hit.path, category: categoryFilter, period })} className="block rounded border border-neutral-800/90 bg-neutral-950 px-3 py-2 hover:bg-neutral-900/70">
                 <div className="flex items-center justify-between gap-3">
                   <span className="min-w-0">
                     <span className="block truncate font-mono text-xs text-neutral-100">{hit.path}</span>

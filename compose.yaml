@@ -1,0 +1,46 @@
+name: bot-observability
+x-app-env: &app-env
+  DATABASE_URL: ${DATABASE_URL:-postgres://postgres:postgres@db:5432/bot_observability}
+  BOT_ADMIN_TOKEN: ${BOT_ADMIN_TOKEN:?Run npm run setup or configure .env}
+  BOT_IP_HASH_SECRET: ${BOT_IP_HASH_SECRET:?Configure a separate IP hash secret}
+  BOT_INGEST_TOKENS: ${BOT_INGEST_TOKENS:?Configure project ingestion keys}
+  BOT_COLLECTOR_ORIGIN: ${BOT_COLLECTOR_ORIGIN:-http://localhost:3000}
+  BOT_EVENT_RPM: ${BOT_EVENT_RPM:-120}
+  BOT_QUERY_ALLOWLIST: ${BOT_QUERY_ALLOWLIST:-}
+  BOT_ACCEPT_LEGACY_INGEST: "false"
+services:
+  db:
+    image: postgres:17.11
+    environment:
+      POSTGRES_DB: bot_observability
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - database:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d bot_observability"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+  migrate:
+    image: ${BOT_APP_IMAGE:-bot-observability:local}
+    build: .
+    environment: *app-env
+    command: ["npm", "run", "migrate"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+  app:
+    image: ${BOT_APP_IMAGE:-bot-observability:local}
+    build: .
+    environment: *app-env
+    ports:
+      - "${BOT_LISTEN_ADDRESS:-127.0.0.1}:${BOT_PORT:-3000}:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+volumes:
+  database:

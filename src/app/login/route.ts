@@ -13,21 +13,21 @@ import {
 export async function POST(request: Request) {
   const adminToken = getAdminToken();
   if (!isStrongSecret(adminToken)) {
-    return NextResponse.redirect(new URL("/dashboard?error=not_configured", request.url), 303);
+    return new NextResponse(null, { status: 303, headers: { Location: "/dashboard?error=not_configured" } });
   }
 
   if (!checkLoginRateLimit(request)) {
-    return NextResponse.redirect(new URL("/dashboard?error=rate_limited", request.url), 303);
+    return new NextResponse(null, { status: 303, headers: { Location: "/dashboard?error=rate_limited" } });
   }
 
   const formData = await request.formData();
   const token = formData.get("token");
 
   if (typeof token !== "string" || !isTokenValid(token, adminToken)) {
-    return NextResponse.redirect(new URL("/dashboard?error=invalid", request.url), 303);
+    return new NextResponse(null, { status: 303, headers: { Location: "/dashboard?error=invalid" } });
   }
 
-  const response = NextResponse.redirect(new URL("/dashboard", request.url), 303);
+  const response = new NextResponse(null, { status: 303, headers: { Location: "/dashboard" } });
   response.cookies.set(SESSION_COOKIE_NAME, createSessionValue(adminToken), {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",

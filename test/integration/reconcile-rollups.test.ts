@@ -10,7 +10,7 @@ import postgres from "postgres";
 // test files that are doing their own concurrent async Postgres I/O in the
 // same process. A *Sync child_process call blocks the event loop for the
 // script's whole run, which can stall those other files' in-flight queries —
-// a real, if hard-to-reproduce-locally, source of CI-only flakiness.
+// a real, if hard-to-reproduce-locally, source of machine-dependent flakiness.
 const execFileAsync = promisify(execFile);
 
 // Integration tests only run when TEST_DATABASE_URL is set — see
@@ -49,6 +49,7 @@ describe.skipIf(!url)("reconcile-rollups.mjs", () => {
       const rollups = readFileSync(join(migrationsDir, "002_rollups.sql"), "utf8");
       await scoped.unsafe(rollups);
 
+      await scoped.unsafe(readFileSync(join(migrationsDir, "005_raw_retention.sql"), "utf8"));
       const day1 = "2026-02-01T10:00:00Z";
       const day2 = "2026-02-02T10:00:00Z";
       await scoped.unsafe(`
@@ -73,8 +74,8 @@ describe.skipIf(!url)("reconcile-rollups.mjs", () => {
           ('2026-02-01', 'proj', 'GhostBot', 'generic', '2xx', 999, 999)
       `);
 
-      const { stdout } = await execFileAsync("node", [reconcileScript, withSearchPath(url as string, schema)]);
-      expect(stdout).toContain("reconciled: retained rollup window matches raw");
+      const { stdout } = await execFileAsync("node", [reconcileScript, withSearchPath(url as string, schema)], { env: { ...process.env, BOT_INGESTION_PAUSED: "true", RAW_COMPLETE_FROM: "2026-02-01" } });
+      expect(stdout).toContain("reconciled: complete rollup interval matches weighted raw events");
 
       const daily = await scoped<{ day: string; bot_name: string; status_class: string; hits: number; verified_hits: number }[]>`
         SELECT day::text, bot_name, status_class, hits, verified_hits FROM bot_hits_daily ORDER BY day, bot_name, status_class
@@ -102,5 +103,35 @@ describe.skipIf(!url)("reconcile-rollups.mjs", () => {
       await admin.end();
       await scoped.end();
     }
+  });
+});
+
+// Retention must never prune within a UTC day or turn a partial day into a
+// supposedly complete rebuild interval.
+describe.skipIf(!url)("UTC retention boundary", () => {
+  it("prunes whole days, preserves rollups and rejects an assertion before its watermark", async () => {
+    const schema = `vitest_retention_${Date.now()}`;
+    const admin = postgres(url as string, { max: 1 });
+    const scoped = postgres(url as string, { max: 1, connection: { search_path: schema, timezone: "UTC" } });
+    const target = new URL(url as string);
+    target.searchParams.set("search_path", schema);
+    try {
+      await admin.unsafe(`CREATE SCHEMA "${schema}"`);
+      for (const file of ["001_init.sql", "002_rollups.sql", "005_raw_retention.sql"]) await scoped.unsafe(readFileSync(join(migrationsDir, file), "utf8"));
+      const [{ cutoff }] = await scoped`SELECT ((now() AT TIME ZONE 'UTC')::date - 1)::text AS cutoff`;
+      await scoped`INSERT INTO bot_hits (created_at, project_name, bot_name, bot_category) VALUES
+        (${cutoff}::date - interval '1 millisecond', 'retention', 'OldBot', 'generic'),
+        (${cutoff}::date, 'retention', 'BoundaryBot', 'generic'),
+        (${cutoff}::date + interval '1 millisecond', 'retention', 'BoundaryBot', 'generic')`;
+      await scoped`INSERT INTO bot_hits_daily (day, project_name, bot_name, bot_category, status_class, hits) VALUES
+        (${cutoff}::date - 1, 'retention', 'OldBot', 'generic', 'unknown', 75)`;
+      await execFileAsync("node", [join(__dirname, "..", "..", "scripts", "retain-raw-events.mjs"), target.toString(), "1"], { env: { ...process.env, RAW_EVENT_RETENTION_BATCH_SIZE: "1" } });
+      expect((await scoped`SELECT COUNT(*)::int AS count FROM bot_hits`)[0].count).toBe(2);
+      expect((await scoped`SELECT hits FROM bot_hits_daily`)[0].hits).toBe(75);
+      expect((await scoped`SELECT pruned_before::text FROM raw_retention_state`)[0].pruned_before).toBe(cutoff);
+      const prior = new Date(`${cutoff}T00:00:00Z`); prior.setUTCDate(prior.getUTCDate() - 1);
+      await expect(execFileAsync("node", [join(__dirname, "..", "..", "scripts", "reconcile-rollups.mjs"), target.toString()], { env: { ...process.env, BOT_INGESTION_PAUSED: "true", RAW_COMPLETE_FROM: prior.toISOString().slice(0, 10) } })).rejects.toThrow();
+      expect((await scoped`SELECT hits FROM bot_hits_daily`)[0].hits).toBe(75);
+    } finally { await scoped.end(); await admin.unsafe(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`); await admin.end(); }
   });
 });

@@ -50,6 +50,12 @@ describe("detectBot", () => {
 });
 
 describe("PATTERNS invariants", () => {
+  it("does not classify policy tokens as observed crawlers", () => {
+    expect(detectBot("Google-Extended")).toBeNull();
+    expect(detectBot("Applebot-Extended")).toBeNull();
+    expect(detectBot("Applebot/1.0 Applebot-Extended")?.name).toBe("Applebot");
+    expect(PATTERNS.some((p) => p.name.endsWith("-Extended"))).toBe(false);
+  });
   // AI_SEARCH_BOTS / AI_AGENT_BOTS (categories.ts) exist only to remap
   // legacy DB rows whose bot_category was persisted as the generic
   // "ai_crawler" placeholder before per-bot categories existed. Every

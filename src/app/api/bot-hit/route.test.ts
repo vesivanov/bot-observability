@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   insertHit: vi.fn(),
+  recordConnectionReceipt: vi.fn(),
   upsertProjectHeartbeat: vi.fn(),
   close: vi.fn(),
   verifyBot: vi.fn(async () => "ua_only"),
@@ -10,6 +11,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/request-db", () => ({
   getRequestDb: vi.fn(() => ({
     insertHit: mocks.insertHit,
+    recordConnectionReceipt: mocks.recordConnectionReceipt,
     upsertProjectHeartbeat: mocks.upsertProjectHeartbeat,
     close: mocks.close,
   })),
@@ -17,10 +19,12 @@ vi.mock("@/lib/request-db", () => ({
 
 vi.mock("@/lib/verify", () => ({ verifyBot: mocks.verifyBot }));
 
-import { normalizeSampleRate, POST } from "./route";
+import { normalizeSampleRate } from "@/lib/sampling";
+import { POST } from "./route";
 
 const originalEnv = { ...process.env };
 const ingestToken = "i".repeat(32);
+let clockTick = 0;
 
 function makeRequest(body: unknown, headers: Record<string, string> = {}) {
   return new Request("https://collector.example/api/bot-hit", {
@@ -41,7 +45,10 @@ describe("POST /api/bot-hit", () => {
       BOT_LOG_TOKEN: "",
       BOT_ACCEPT_LEGACY_INGEST: "false",
     };
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(Date.UTC(2026, 9, 2, 12) + ++clockTick * 120_000));
     mocks.insertHit.mockReset();
+    mocks.recordConnectionReceipt.mockReset();
     mocks.upsertProjectHeartbeat.mockReset();
     mocks.close.mockReset();
     mocks.verifyBot.mockReset();
@@ -49,6 +56,7 @@ describe("POST /api/bot-hit", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     process.env = { ...originalEnv };
   });
 
@@ -118,7 +126,7 @@ describe("POST /api/bot-hit", () => {
       project_name: "tracked-site",
       path: "/a/very-long-path",
       method: "POST",
-      status_code: 600,
+      status_code: 0,
       sample_rate: 0.25,
       heartbeat: false,
     });
@@ -126,18 +134,12 @@ describe("POST /api/bot-hit", () => {
     expect(mocks.insertHit.mock.calls[0][0].ip).not.toContain("203.0.113.10");
   });
 
-  it("accepts a validated bot identity from an authenticated reporter", async () => {
-    const response = await POST(makeRequest({
-      user_agent: "Mozilla/5.0",
-      bot_name: "Googlebot",
-      bot_category: "search_crawler",
-    }, { authorization: `Bearer ${ingestToken}` }));
-
+  it("classifies the UA instead of trusting reported identity", async () => {
+    const response = await POST(makeRequest({ user_agent: "GPTBot/1.0", bot_name: "Googlebot", bot_category: "search_crawler" }, { authorization: `Bearer ${ingestToken}` }));
     expect(response.status).toBe(201);
-    expect(mocks.insertHit.mock.calls[0][0]).toMatchObject({
-      bot_name: "Googlebot",
-      bot_category: "search_crawler",
-    });
+    expect(mocks.insertHit.mock.calls[0][0]).toMatchObject({ bot_name: "GPTBot", bot_category: "ai_training" });
+    const browser = await POST(makeRequest({ user_agent: "Mozilla/5.0", bot_name: "GPTBot", bot_category: "ai_training" }, { authorization: `Bearer ${ingestToken}` }));
+    expect(await browser.json()).toMatchObject({ stored: false, reason: "not_bot" });
   });
 
   it("ignores an invalid submitted bot category", async () => {
@@ -152,7 +154,7 @@ describe("POST /api/bot-hit", () => {
     expect(mocks.insertHit).not.toHaveBeenCalled();
   });
 
-  it("truncates oversized fields and clamps status codes", async () => {
+  it("truncates fields and stores unavailable final statuses as unknown", async () => {
     const response = await POST(makeRequest({
       user_agent: `GPTBot/1.0${"x".repeat(2500)}`,
       path: `/${"p".repeat(1200)}`,
@@ -166,10 +168,10 @@ describe("POST /api/bot-hit", () => {
     const stored = mocks.insertHit.mock.calls[0][0];
     expect(stored.user_agent).toHaveLength(2000);
     expect(stored.path).toHaveLength(1000);
-    expect(stored.referer).toHaveLength(2000);
+    expect(stored.referer).toBe("");
     expect(stored.environment).toHaveLength(100);
     expect(stored.deployment_url).toHaveLength(300);
-    expect(stored.status_code).toBe(999);
+    expect(stored.status_code).toBe(0);
   });
 
   it("upserts heartbeats without creating raw bot rows", async () => {
@@ -207,13 +209,34 @@ describe("POST /api/bot-hit", () => {
     expect(await response.json()).toEqual({ error: "storage_failed" });
   });
 
-  it("enforces the per-instance rate limit", async () => {
+  it("does not charge non-bots and isolates projects sharing an egress IP", async () => {
+    process.env.BOT_EVENT_RPM = "2";
+    process.env.BOT_INGEST_TOKENS = JSON.stringify({ "tracked-site": ingestToken, "other-site": "o".repeat(32) });
     const headers = { authorization: `Bearer ${ingestToken}`, "x-real-ip": "203.0.113.251" };
-    for (let i = 0; i < 120; i++) {
-      expect((await POST(makeRequest({ user_agent: "Mozilla/5.0" }, headers))).status).toBe(200);
-    }
-    expect((await POST(makeRequest({ user_agent: "Mozilla/5.0" }, headers))).status).toBe(429);
+    for (let i = 0; i < 130; i++) expect((await POST(makeRequest({ user_agent: "Mozilla/5.0" }, headers))).status).toBe(200);
+    vi.advanceTimersByTime(60_001);
+    for (let i = 0; i < 2; i++) expect((await POST(makeRequest({ user_agent: "GPTBot/1.0" }, headers))).status).toBe(201);
+    const limited = await POST(makeRequest({ user_agent: "GPTBot/1.0" }, headers));
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("Retry-After")).toBe("60");
+    expect((await POST(makeRequest({ user_agent: "GPTBot/1.0" }, { ...headers, authorization: `Bearer ${"o".repeat(32)}` }))).status).toBe(201);
   });
+
+  it("keeps probes out of analytics and uses the credential's project", async () => {
+    const res = await POST(makeRequest({ probe: "connection", project: "other", user_agent: "GPTBot/1.0" }, { authorization: `Bearer ${ingestToken}` }));
+    expect(await res.json()).toMatchObject({ received: true, project: "tracked-site" });
+    expect(mocks.recordConnectionReceipt).toHaveBeenCalledWith("tracked-site", "probe");
+    expect(mocks.insertHit).not.toHaveBeenCalled();
+  });
+
+  it("does not verify missing original IP from collector transport headers and strips queries", async () => {
+    vi.advanceTimersByTime(60_001);
+    const res = await POST(makeRequest({ user_agent: "Googlebot/2.1", url: "https://site.example/a?secret=hide", referer: "https://user:pass@site.example/b?token=hide#fragment" }, { authorization: `Bearer ${ingestToken}`, "x-forwarded-for": "66.249.66.1" }));
+    expect(res.status).toBe(201);
+    expect(mocks.verifyBot).not.toHaveBeenCalled();
+    expect(mocks.insertHit.mock.calls[0][0]).toMatchObject({ ip: "", query_string: "", referer: "https://site.example/b" });
+  });
+
 });
 
 describe("normalizeSampleRate", () => {

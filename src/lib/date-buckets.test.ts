@@ -21,7 +21,7 @@ describe("fillDatePeriods", () => {
 
     const keys = fillDatePeriods(3, referenceTime);
 
-    expect(keys).toEqual(["2024-01-14", "2024-01-15", "2024-01-16"]);
+    expect(keys).toEqual(["2024-01-13", "2024-01-14", "2024-01-15", "2024-01-16"]);
   });
 
   it("is unaffected by process timezone for a UTC-midday reference time", () => {
@@ -46,17 +46,18 @@ describe("fillDatePeriods", () => {
     const referenceTime = new Date("2024-03-10T12:00:00.000Z");
     const keys = fillDatePeriods(5, referenceTime);
 
-    expect(keys[0]).toBe("2024-03-06");
+    expect(keys[0]).toBe("2024-03-05");
     expect(keys[keys.length - 1]).toBe("2024-03-10");
-    expect(keys).toEqual(["2024-03-06", "2024-03-07", "2024-03-08", "2024-03-09", "2024-03-10"]);
+    expect(keys).toEqual(["2024-03-05", "2024-03-06", "2024-03-07", "2024-03-08", "2024-03-09", "2024-03-10"]);
   });
 
-  it("handles the periodDays=1 edge case: first key equals last key equals the reference UTC day", () => {
-    const referenceTime = new Date("2024-03-10T18:45:12.000Z");
-    const keys = fillDatePeriods(1, referenceTime);
+  it("includes both partial edge days of a rolling seven-day window", () => {
+    const keys = fillDatePeriods(new Date("2026-09-25T12:00:00Z"), new Date("2026-10-02T12:00:00Z"));
+    expect(keys).toEqual(["2026-09-25", "2026-09-26", "2026-09-27", "2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02"]);
+  });
 
-    expect(keys).toHaveLength(1);
-    expect(keys[0]).toBe("2024-03-10");
-    expect(keys[0]).toBe(keys[keys.length - 1]);
+  it("excludes the end day at an exact UTC midnight and includes a one-day custom selection", () => {
+    expect(fillDatePeriods(new Date("2026-10-01T00:00:00Z"), new Date("2026-10-02T00:00:00Z"))).toEqual(["2026-10-01"]);
+    expect(fillDatePeriods(1, new Date("2024-03-10T18:45:12Z"))).toEqual(["2024-03-09", "2024-03-10"]);
   });
 });

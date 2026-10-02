@@ -36,3 +36,10 @@ h3 {
 p {
   text-wrap: pretty;
 }
+
+/* Request logs need legible controls and stable numeric columns. */
+button, input, select { min-height: 40px; }
+button, a, summary { outline-offset: 4px; }
+:focus-visible { outline: 2px solid #fbbf24; }
+table, .font-mono { font-variant-numeric: tabular-nums; }
+@media (max-width: 640px) { input, select { max-width: 100%; } }

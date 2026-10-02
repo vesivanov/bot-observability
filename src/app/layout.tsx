@@ -25,7 +25,7 @@ export default function RootLayout({
               Bot Observability
             </Link>
             <nav className="flex items-center gap-1">
-              <Link href="/dashboard" className="text-sm font-medium text-neutral-400 hover:text-neutral-100">
+              <Link href="/dashboard" prefetch={false} className="text-sm font-medium text-neutral-400 hover:text-neutral-100">
                 Dashboard
               </Link>
             </nav>

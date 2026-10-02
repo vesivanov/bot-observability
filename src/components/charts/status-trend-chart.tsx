@@ -1,5 +1,6 @@
 "use client";
 
+import { fillDatePeriods } from "@/lib/date-buckets";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { ChartTooltip, axisCursor, tooltipWrapperStyle } from "@/components/charts/chart-tooltip";
 import { statusClassColor, statusClassLabel } from "@/app/dashboard/shared";
@@ -13,16 +14,16 @@ interface DailyStatusCount {
 const CLASSES = ["2xx", "3xx", "4xx", "5xx", "unknown"];
 
 function formatDateLabel(label: string | number | undefined) {
-  const date = new Date(String(label) + "T00:00:00");
-  return date.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+  const date = new Date(String(label) + "T00:00:00Z");
+  return date.toLocaleDateString("en-US", { timeZone: "UTC", weekday: "long", month: "short", day: "numeric" });
 }
 
-export function StatusTrendChart({ data }: { data: DailyStatusCount[] }) {
+export function StatusTrendChart({ data, from, to }: { data: DailyStatusCount[]; from?: Date; to?: Date }) {
   if (data.length === 0) {
     return <div className="flex h-48 items-center justify-center text-sm text-neutral-500">No status data</div>;
   }
 
-  const dates = Array.from(new Set(data.map((row) => row.date))).sort();
+  const dates = from && to ? fillDatePeriods(from, to) : Array.from(new Set(data.map((row) => row.date))).sort();
   const byDateClass = new Map(data.map((row) => [`${row.date}:${row.status_class}`, row.count]));
   const series = dates.map((date) => {
     const entry: Record<string, string | number> = { date };
@@ -43,8 +44,8 @@ export function StatusTrendChart({ data }: { data: DailyStatusCount[] }) {
           tickLine={false}
           axisLine={false}
           tickFormatter={(d) => {
-            const date = new Date(d + "T00:00:00");
-            return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+            const date = new Date(d + "T00:00:00Z");
+            return date.toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric" });
           }}
           interval="preserveStartEnd"
         />

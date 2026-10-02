@@ -1,3 +1,4 @@
+import { dashboardHref } from "./query-context";
 import type { BotConfidenceCount, CategoryCount, NewBot } from "@/lib/schema";
 
 // Pure finding-generation logic extracted out of
@@ -66,12 +67,13 @@ export function buildAttentionFindings(params: {
   trendPercent: number | null;
   period: string;
   project?: string;
+  category?: string;
 }): Finding[] {
-  const { current, previous, trendPercent, period, project } = params;
+  const { current, previous, trendPercent, period, project, category } = params;
   const findings: Finding[] = [];
 
   if (previous) {
-    findings.push(...findNewBots(current, period, project));
+    if (!project && !category) findings.push(...findNewBots(current, period));
 
     if (trendPercent !== null && Math.abs(trendPercent) >= 50 && previous.total >= 100) {
       const direction = trendPercent >= 0 ? "up" : "down";
@@ -106,5 +108,8 @@ export function buildAttentionFindings(params: {
     }
   }
 
-  return findings.slice(0, 4);
+  return findings.slice(0, 4).map((finding) => {
+    const selected = new URL(finding.href, "https://collector.test").searchParams;
+    return { ...finding, href: dashboardHref({ view: selected.get("view") ?? "overview", period, project, category: category ?? selected.get("category") ?? undefined, bot: selected.get("bot") ?? undefined }) };
+  });
 }

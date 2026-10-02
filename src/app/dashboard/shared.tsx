@@ -57,6 +57,7 @@ export function formatDateTime(value: string | Date) {
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZone: "UTC",
     timeZoneName: "short",
   });
 }
@@ -102,43 +103,23 @@ export function knownStatusAccent(knownStatusPct: number): string {
   return "text-neutral-100";
 }
 
-export function eventHref(params: {
-  project?: string;
-  bot?: string;
-  path?: string;
-  period: string;
-}) {
-  const query = new URLSearchParams({
-    view: "events",
-    period: params.period,
-  });
-  if (params.project) query.set("project", params.project);
-  if (params.bot) query.set("bot", params.bot);
-  if (params.path) query.set("path", params.path);
-  return `/dashboard?${query.toString()}`;
+import { dashboardHref, type DashboardQuery } from "@/lib/query-context";
+export { dashboardHref, readDashboardQuery } from "@/lib/query-context";
+
+export function eventHref(params: DashboardQuery) {
+  return dashboardHref({ ...params, view: "events" });
 }
 
-export function botHref(params: { bot: string; project?: string; period: string }) {
-  const query = new URLSearchParams({
-    view: "bots",
-    bot: params.bot,
-    period: params.period,
-  });
-  if (params.project) query.set("project", params.project);
-  return `/dashboard?${query.toString()}`;
+export function botHref(params: DashboardQuery & { bot: string }) {
+  return dashboardHref({ ...params, view: "bots" });
 }
 
-export function overviewHref(params: { period: string; project?: string }) {
-  const query = new URLSearchParams({ view: "overview", period: params.period });
-  if (params.project) query.set("project", params.project);
-  return `/dashboard?${query.toString()}`;
+export function overviewHref(params: DashboardQuery) {
+  return dashboardHref({ ...params, view: "overview" });
 }
 
-export function categoryHref(params: { view: string; period: string; project?: string; category?: string }) {
-  const query = new URLSearchParams({ view: params.view, period: params.period });
-  if (params.project) query.set("project", params.project);
-  if (params.category) query.set("category", params.category);
-  return `/dashboard?${query.toString()}`;
+export function categoryHref(params: DashboardQuery) {
+  return dashboardHref(params);
 }
 
 // -- Meta lookups (project list, latest heartbeat/event) shared by the shell
@@ -196,9 +177,9 @@ export function StatTile({
   accent?: string;
 }) {
   return (
-    <div className="rounded border border-neutral-800/90 bg-neutral-950 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
-      <p className="text-[10px] font-medium uppercase tracking-wider text-neutral-600">{label}</p>
-      <p className={`mt-1 font-mono text-sm font-semibold tabular-nums ${accent}`}>{value}</p>
+    <div className="rounded border border-neutral-800/90 bg-neutral-950 p-4">
+      <p className="text-xs font-medium text-neutral-400">{label}</p>
+      <p className={`mt-2 font-mono text-xl font-semibold tabular-nums ${accent}`}>{value}</p>
       {detail ? <p className="mt-1 text-xs leading-5 text-neutral-500">{detail}</p> : null}
     </div>
   );
@@ -209,7 +190,7 @@ export function StatTile({
 // to rollup-backed long-range mode (>90 day periods).
 export function LongRangeCaption({ label = "Some panels are" }: { label?: string }) {
   return (
-    <p className="text-xs italic text-neutral-600">{label} available for ranges up to {LONG_RANGE_THRESHOLD_DAYS} days.</p>
+    <p className="text-xs italic text-neutral-600">{label} available only from retained raw requests. Daily aggregates preserve counts, but cannot recreate paths or exact request times.</p>
   );
 }
 
@@ -241,10 +222,10 @@ export function NormalizedCategoryChip({ botName, category }: { botName: string;
 export function ConfidenceChip({ confidence }: { confidence: string }) {
   const verified = confidence === "verified";
   return (
-    <span className={`inline-flex min-h-5 items-center rounded border px-1.5 text-[10px] font-medium ${
+    <span title="Verified means successful forward-confirmed reverse DNS for a supported bot. UA only includes unsupported, unchecked or unconfirmed requests." className={`inline-flex min-h-5 items-center rounded border px-1.5 text-xs font-medium ${
       verified
         ? "border-emerald-700/50 bg-emerald-950/25 text-emerald-300"
-        : "border-amber-800/70 bg-amber-950/30 text-amber-300"
+        : "border-neutral-700 bg-neutral-900 text-neutral-400"
     }`}>
       {verified ? "Verified" : "UA only"}
     </span>
@@ -252,7 +233,8 @@ export function ConfidenceChip({ confidence }: { confidence: string }) {
 }
 
 export function StatusCodeChip({ statusCode }: { statusCode: number }) {
-  const tone =
+  const known = statusCode >= 200 && statusCode < 600;
+  const tone = !known ? "border-neutral-700 bg-neutral-900 text-neutral-400" :
     statusCode >= 500 ? "border-rose-700/50 bg-rose-950/25 text-rose-300"
       : statusCode >= 400 ? "border-orange-700/50 bg-orange-950/25 text-orange-300"
         : statusCode >= 300 ? "border-sky-700/50 bg-sky-950/25 text-sky-300"
@@ -261,7 +243,7 @@ export function StatusCodeChip({ statusCode }: { statusCode: number }) {
 
   return (
     <span className={`inline-flex min-h-5 min-w-11 items-center justify-center rounded border px-1.5 font-mono text-[10px] font-medium tabular-nums ${tone}`}>
-      {statusCode > 0 ? statusCode : "-"}
+      {known ? statusCode : "Unknown"}
     </span>
   );
 }
@@ -296,28 +278,10 @@ export function statusClassLabel(statusClass: string) {
 // aren't already visible as the active state of another control (project,
 // bot). Category is intentionally excluded — the category chip row already
 // shows its own active state. --
-export function ActiveFilterChips({
-  view,
-  period,
-  project,
-  bot,
-  category,
-}: {
-  view: string;
-  period: string;
-  project?: string;
-  bot?: string;
-  category?: string;
-}) {
+export function ActiveFilterChips(context: DashboardQuery) {
   const chips: { label: string; href: string }[] = [];
-  if (project) {
-    chips.push({ label: `project: ${project}`, href: categoryHref({ view, period, category }) });
-  }
-  if (bot) {
-    const query = new URLSearchParams({ view, period });
-    if (project) query.set("project", project);
-    if (category) query.set("category", category);
-    chips.push({ label: `bot: ${bot}`, href: `/dashboard?${query.toString()}` });
+  for (const key of ["project", "bot", "path"] as const) {
+    if (context[key]) chips.push({ label: `${key}: ${context[key]}`, href: dashboardHref(context, { [key]: undefined }) });
   }
   if (chips.length === 0) return null;
   return (

@@ -78,10 +78,12 @@ export function parsePeriod(value: string | string[] | undefined): {
   if (customMatch) {
     const [, startStr, endStr] = customMatch;
     const start = new Date(`${startStr}T00:00:00.000Z`);
-    const end = new Date(`${endStr}T23:59:59.999Z`);
+    // Inclusive picker dates become a half-open UTC interval [start, end).
+    const lastDay = new Date(`${endStr}T00:00:00.000Z`);
+    const end = addDays(lastDay, 1);
     const spanDays = (end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000);
-    if (!Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime()) && start.getTime() < end.getTime() && spanDays <= MAX_CUSTOM_SPAN_DAYS) {
-      return { raw, days: Math.round(spanDays), start, end, preset: false };
+    if (!Number.isNaN(start.getTime()) && !Number.isNaN(lastDay.getTime()) && start.toISOString().slice(0, 10) === startStr && lastDay.toISOString().slice(0, 10) === endStr && start.getTime() < end.getTime() && spanDays <= MAX_CUSTOM_SPAN_DAYS) {
+      return { raw, days: spanDays, start, end, preset: false };
     }
   }
 
@@ -101,3 +103,15 @@ export function periodLabel(periodDays: number) {
 export function periodDescription(periodDays: number) {
   return periodDays === 1 ? "Last 24 hours" : `Last ${periodDays} days`;
 }
+
+export function resolveDashboardRange(period: string, now: Date, rawDetailFrom?: Date | null) {
+  const requested = resolvePeriodRange(period, now);
+  const aggregate = requested.periodDays > LONG_RANGE_THRESHOLD_DAYS || Boolean(rawDetailFrom && requested.start < rawDetailFrom);
+  const midnight = (date: Date) => new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const start = aggregate ? midnight(requested.start) : requested.start;
+  const endDay = midnight(requested.end);
+  const end = aggregate && requested.end.getTime() !== endDay.getTime() ? addDays(endDay, 1) : requested.end;
+  return { ...requested, start, end, aggregate, requestedStart: requested.start, requestedEnd: requested.end };
+}
+
+export type DashboardRange = ReturnType<typeof resolveDashboardRange>;

@@ -48,7 +48,7 @@ function hit(overrides: Partial<BotHit>): BotHit {
 function currentUtcDayWindow() {
   const now = new Date();
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
-  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59, 999));
+  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0, 0));
   return { start, end };
 }
 
@@ -110,59 +110,19 @@ describe.skipIf(!url)("rollup / raw parity", () => {
     expect(rollupCategories).toEqual(rawCategories);
   });
 
-  // Regression test for the period-over-period double-count bug: the
-  // overview view queries a "current" window [periodStart, periodEnd] and a
-  // "previous" window [previousPeriodStart, periodStart] back-to-back.
-  // fetchRollupStats buckets by UTC calendar day with both bounds
-  // inclusive, so naively reusing `periodStart` as both the current
-  // window's lower bound and the previous window's upper bound counts that
-  // calendar day's hits twice. The fix (src/app/dashboard/views/overview.tsx)
-  // backs the previous window's upper bound off by one day; this test
-  // exercises fetchRollupStats directly with that same adjacency.
-  it("adjacent rollup windows sharing a boundary day do not double-count it", async () => {
-    const { start: boundaryDayStart, end: boundaryDayEnd } = currentUtcDayWindow();
-    const previousWindowStart = new Date(boundaryDayStart.getTime() - 7 * 86_400_000);
-    // Naive (buggy) previous-window upper bound: the same instant as the
-    // current window's lower bound. Both windows' ::date bucket includes
-    // the boundary day, so this reproduces the double-count.
-    const naivePreviousWindowEnd = boundaryDayStart;
-    // Corrected previous-window upper bound (mirrors the fix in
-    // src/app/dashboard/views/overview.tsx): one day earlier, so its
-    // ::date bucket stops the day before the boundary day.
-    const correctedPreviousWindowEnd = new Date(boundaryDayStart.getTime() - 86_400_000);
-
-    // Snapshot totals before adding new hits — this suite's `beforeAll`
-    // fixture already wrote data into the boundary day, so we assert on the
-    // delta these 3 new hits cause rather than an absolute count.
-    const [baselineCurrent, baselineNaivePrevious, baselineCorrectedPrevious] = await Promise.all([
-      db.fetchRollupStats(boundaryDayStart, boundaryDayEnd, PROJECT),
-      db.fetchRollupStats(previousWindowStart, naivePreviousWindowEnd, PROJECT),
-      db.fetchRollupStats(previousWindowStart, correctedPreviousWindowEnd, PROJECT),
-    ]);
-
+  it("adjacent rollup windows partition the boundary day without an adjustment", async () => {
+    const { start, end } = currentUtcDayWindow();
+    const previousStart = new Date(start.getTime() - 7 * 86_400_000);
+    const beforeCurrent = await db.fetchRollupStats(start, end, PROJECT);
+    const beforePrevious = await db.fetchRollupStats(previousStart, start, PROJECT);
     await db.insertHit(hit({ bot_name: BOT_A, bot_category: "ai_training" }));
-    await db.insertHit(hit({ bot_name: BOT_A, bot_category: "ai_training" }));
-    await db.insertHit(hit({ bot_name: BOT_B, bot_category: "search_crawler" }));
-
-    const [current, naivePrevious, correctedPrevious] = await Promise.all([
-      db.fetchRollupStats(boundaryDayStart, boundaryDayEnd, PROJECT),
-      db.fetchRollupStats(previousWindowStart, naivePreviousWindowEnd, PROJECT),
-      db.fetchRollupStats(previousWindowStart, correctedPreviousWindowEnd, PROJECT),
-    ]);
-
-    expect(current.total - baselineCurrent.total).toBe(3);
-    // Demonstrates the bug this test guards against: the naive boundary
-    // still double-counts the 3 new hits into the "previous" window too,
-    // because its ::date bucket also includes the boundary day.
-    expect(naivePrevious.total - baselineNaivePrevious.total).toBe(3);
-    // With the corrected boundary, the previous window sees none of the
-    // boundary day's new hits — each hit is counted in exactly one window.
-    expect(correctedPrevious.total - baselineCorrectedPrevious.total).toBe(0);
+    expect((await db.fetchRollupStats(start, end, PROJECT)).total - beforeCurrent.total).toBe(1);
+    expect((await db.fetchRollupStats(previousStart, start, PROJECT)).total - beforePrevious.total).toBe(0);
   });
 
   // Companion regression test for the raw-mode (fetchStatsBatch) path, which
   // uses exact `created_at` timestamps rather than day buckets. The fix
-  // makes the lower bound exclusive (`created_at > from AND created_at <=
+  // makes the lower bound inclusive (`created_at >= from AND created_at <
   // to`) so a hit landing exactly on a shared window boundary is counted in
   // only the window where it's the (inclusive) upper bound.
   it("adjacent raw-mode windows partition a shared boundary instant exactly once", async () => {
@@ -196,17 +156,65 @@ describe.skipIf(!url)("rollup / raw parity", () => {
       db.fetchStatsBatch(boundary, after, PROJECT),
     ]);
 
-    // The boundary-instant hit lands only in the window where `boundary` is
-    // the inclusive upper bound, not the window where it's the exclusive
-    // lower bound.
-    expect(afterPrevious.total - baselinePrevious.total).toBe(1);
-    expect(afterCurrent.total - baselineCurrent.total).toBe(0);
+    // Half-open windows count the shared instant in the current window.
+    expect(afterPrevious.total - baselinePrevious.total).toBe(0);
+    expect(afterCurrent.total - baselineCurrent.total).toBe(1);
+  });
+});
+
+describe.skipIf(!url)("complete rankings and outcome coverage", () => {
+  const project = "__vitest_complete_rankings__";
+  let db: DbClient;
+  let raw: ReturnType<typeof postgres>;
+  beforeAll(async () => {
+    db = createDbClient(url as string);
+    raw = postgres(url as string, { max: 1 });
+    for (let i = 0; i < 13; i++) await db.insertHit(hit({ project_name: project, bot_name: `__VitestRank${i}__` }));
+    await db.insertHit(hit({ project_name: project, bot_name: "ChatGPT-User", bot_category: "ai_crawler", status_code: 0, sample_rate: 0.5 }));
+    await db.insertHit(hit({ project_name: project, bot_name: "ChatGPT-User", bot_category: "ai_agent", status_code: 500, sample_rate: 0.25 }));
+    await db.insertHit(hit({ project_name: project, status_code: 100 }));
+    await db.insertHit(hit({ project_name: project, status_code: 700 }));
+  });
+  afterAll(async () => {
+    await raw`DELETE FROM bot_hits WHERE project_name = ${project}`;
+    await raw`DELETE FROM bot_hits_daily WHERE project_name = ${project}`;
+    await raw`DELETE FROM bot_first_seen WHERE bot_name LIKE '__VitestRank%'`;
+    await raw.end();
+    await db.close();
+  });
+  it("merges legacy categories before ranking and accounts for all bots in the chart", async () => {
+    const { start, end } = currentUtcDayWindow();
+    const stats = await db.fetchStatsBatch(start, end, project);
+    const rollup = await db.fetchRollupStats(start, end, project);
+    const activity = await db.botPeriodCounts({ from: start, to: end, project, granularity: "day" });
+    expect(stats.total).toBe(21);
+    expect(activity.reduce((sum, row) => sum + row.count, 0)).toBe(stats.total);
+    for (const rows of [stats.topBotsWithConfidence, stats.aiBotsWithConfidence, rollup.topBots, rollup.aiBotsWithConfidence]) {
+      const agent = rows.filter((row) => row.bot_name === "ChatGPT-User");
+      expect(agent).toHaveLength(1);
+      expect(agent[0]).toMatchObject({ bot_category: "ai_agent", total_hits: 6 });
+    }
+    expect(stats.newBots).toEqual([]);
+  });
+  it("uses the same weighted known-status denominator in raw, rollup and per-bot outcomes", async () => {
+    const { start, end } = currentUtcDayWindow();
+    const stats = await db.fetchStatsBatch(start, end, project);
+    const rollup = await db.fetchRollupStats(start, end, project);
+    const outcomes = await db.fetchStatusBatch(start, end, project);
+    expect(stats.knownStatusHits).toBe(17);
+    expect(rollup.knownStatusHits).toBe(17);
+    expect(stats.errorHits).toBe(4);
+    expect(rollup.errorHits).toBe(4);
+    expect(outcomes.summary.known_status_hits).toBe(17);
+    expect(outcomes.summary.unknown_status_hits).toBe(4);
+    expect(outcomes.botStatuses.find((bot) => bot.bot_name === "ChatGPT-User")).toMatchObject({ total_hits: 6, known_status_hits: 4, error_hits: 4 });
+    expect(outcomes.dailyStatus.reduce((sum, row) => sum + row.count, 0)).toBe(21);
   });
 });
 
 // Parity for the AI subspace surfaced by fetchStatsBatch / fetchRollupStats.
 // Covers the per-bot AI breakdown (bot_conf_ai) and the chip-agnostic AI
-// crawls-vs-visits data (bot_conf_ai_all, only emitted when a chip filter is
+// crawl/fetch comparison data (bot_conf_ai_all, only emitted when a chip filter is
 // applied). Distinct fixture set so this block can be added/removed without
 // touching the BOT_A/B/C assertions above.
 describe.skipIf(!url)("rollup / raw AI parity", () => {
@@ -289,7 +297,7 @@ describe.skipIf(!url)("rollup / raw AI parity", () => {
     expect(rollupAi.has(`${NON_AI_BOT}:generic`)).toBe(false);
   });
 
-  it("raw and rollup preserve crawls AND visits in aiBotsAllWithConfidence when ai_agent chip is selected", async () => {
+  it("raw and rollup preserve crawls AND fetches in aiBotsAllWithConfidence when ai_agent chip is selected", async () => {
     const { start, end } = currentUtcDayWindow();
     const [rollup, rawStats] = await Promise.all([
       db.fetchRollupStats(start, end, AI_PROJECT, "ai_agent"),
@@ -301,7 +309,7 @@ describe.skipIf(!url)("rollup / raw AI parity", () => {
     expect(rawStats.aiBotsWithConfidence.map((r) => r.bot_name).sort()).toEqual([AI_AGENT_BOT]);
 
     // aiBotsAllWithConfidence drops the chip filter — both training AND agent
-    // bots are present, so the crawls-vs-visits panel can show a ratio.
+    // bots are present, so the crawl/fetch comparison panel can show a ratio.
     const rollupAll = confidenceMap(rollup.aiBotsAllWithConfidence);
     expect(rollupAll.get(`${AI_TRAINING_BOT}:ai_training`)).toEqual({ total: 2, verified: 1 });
     expect(rollupAll.get(`${AI_AGENT_BOT}:ai_agent`)).toEqual({ total: 3, verified: 2 });
@@ -408,6 +416,8 @@ describe.skipIf(!url)("rollup / raw legacy-category-remap SQL parity", () => {
       db.fetchRollupStats(start, end, LEGACY_PROJECT, "ai_agent"),
       db.fetchStatsBatch(start, end, LEGACY_PROJECT, "ai_agent"),
     ]);
+    const events = await db.queryFiltered({ from: start, to: end, project: LEGACY_PROJECT, category: "ai_agent" });
+    expect(events.map((row) => row.bot_name)).toEqual([AI_CRAWLER_AGENT_BOT]);
     expect(rollup.total).toBe(1);
     expect(rawStats.total).toBe(1);
   });

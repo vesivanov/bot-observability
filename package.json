@@ -29,14 +29,15 @@
   },
   "homepage": "https://github.com/vesivanov/bot-observability",
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19"
   },
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/dev.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
     "migrate": "node scripts/migrate.mjs",
+    "setup": "node scripts/setup.mjs",
     "reconcile-rollups": "node scripts/reconcile-rollups.mjs",
     "retain-raw": "node scripts/retain-raw-events.mjs",
     "verify:prefilter": "node scripts/verify-bot-prefilter-sync.mjs",
@@ -45,7 +46,7 @@
     "test:integration": "vitest run test/integration"
   },
   "dependencies": {
-    "next": "16.3.5",
+    "next": "16.3.8",
     "postgres": "^3.4.9",
     "react": "19.2.4",
     "react-dom": "19.2.4",
@@ -57,14 +58,9 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.2.10",
+    "eslint-config-next": "16.3.8",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "vitest": "^4.1.10"
-  },
-  "overrides": {
-    "next": {
-      "postcss": "8.5.28"
-    }
+    "vitest": "^4.1.11"
   }
 }
