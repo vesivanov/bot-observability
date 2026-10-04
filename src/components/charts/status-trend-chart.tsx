@@ -2,7 +2,7 @@
 
 import { fillDatePeriods } from "@/lib/date-buckets";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
-import { ChartTooltip, axisCursor, tooltipWrapperStyle } from "@/components/charts/chart-tooltip";
+import { ChartTooltip, axisCursor, tooltipWrapperStyle, chartAxisTick, formatChartCount } from "@/components/charts/chart-tooltip";
 import { statusClassColor, statusClassLabel } from "@/app/dashboard/shared";
 
 interface DailyStatusCount {
@@ -35,12 +35,12 @@ export function StatusTrendChart({ data, from, to }: { data: DailyStatusCount[];
   const presentClasses = CLASSES.filter((cls) => data.some((row) => row.status_class === cls && row.count > 0));
 
   return (
-    <ResponsiveContainer width="100%" height={220}>
+    <ResponsiveContainer width="100%" height={260}>
       <AreaChart data={series} margin={{ top: 6, right: 8, left: -16, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.07)" vertical={false} />
         <XAxis
           dataKey="date"
-          tick={{ fill: "#737373", fontSize: 11 }}
+          tick={chartAxisTick}
           tickLine={false}
           axisLine={false}
           tickFormatter={(d) => {
@@ -49,7 +49,7 @@ export function StatusTrendChart({ data, from, to }: { data: DailyStatusCount[];
           }}
           interval="preserveStartEnd"
         />
-        <YAxis tick={{ fill: "#737373", fontSize: 11 }} tickLine={false} axisLine={false} width={40} />
+        <YAxis tickFormatter={formatChartCount} tick={chartAxisTick} tickLine={false} axisLine={false} width={48} />
         <Tooltip
           content={<ChartTooltip formatLabel={formatDateLabel} />}
           cursor={axisCursor}
@@ -65,6 +65,7 @@ export function StatusTrendChart({ data, from, to }: { data: DailyStatusCount[];
             stackId="status"
             stroke={statusClassColor(cls)}
             strokeWidth={1.5}
+            isAnimationActive={false}
             fill={statusClassColor(cls)}
             fillOpacity={0.32}
             dot={false}

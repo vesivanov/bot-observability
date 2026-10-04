@@ -152,15 +152,15 @@ export function Panel({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded border border-neutral-800/90 bg-neutral-950 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
-      <div className="flex min-h-10 items-center justify-between gap-4 border-b border-neutral-800/80 px-3 py-2">
+    <section className="data-panel">
+      <div className="data-panel-header">
         <div>
-          {eyebrow ? <p className="text-[10px] font-medium uppercase tracking-wider text-neutral-600">{eyebrow}</p> : null}
-          <h2 className="text-sm font-medium text-neutral-100">{title}</h2>
+          {eyebrow ? <p className="data-panel-eyebrow">{eyebrow}</p> : null}
+          <h2>{title}</h2>
         </div>
-        {meta ? <span className="text-xs text-neutral-500">{meta}</span> : null}
+        {meta ? <span className="data-panel-meta">{meta}</span> : null}
       </div>
-      <div className="p-3">{children}</div>
+      <div className="data-panel-body">{children}</div>
     </section>
   );
 }
@@ -177,10 +177,10 @@ export function StatTile({
   accent?: string;
 }) {
   return (
-    <div className="rounded border border-neutral-800/90 bg-neutral-950 p-4">
-      <p className="text-xs font-medium text-neutral-400">{label}</p>
-      <p className={`mt-2 font-mono text-xl font-semibold tabular-nums ${accent}`}>{value}</p>
-      {detail ? <p className="mt-1 text-xs leading-5 text-neutral-500">{detail}</p> : null}
+    <div className="stat-tile">
+      <p className="stat-label">{label}</p>
+      <p className={`stat-value ${value.length > 14 && /[a-z]/i.test(value) ? "stat-value-text" : ""} ${accent}`}>{value}</p>
+      {detail ? <p className="stat-detail">{detail}</p> : null}
     </div>
   );
 }
@@ -199,7 +199,7 @@ export function BarMeter({ value, color = "bg-neutral-500" }: { value: number; c
   // applies once there's a nonzero (but visually-too-thin) value to show.
   const width = value <= 0 ? 0 : Math.max(3, Math.min(value, 100));
   return (
-    <div className="h-1 w-full overflow-hidden rounded-full bg-neutral-800">
+    <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/5">
       <div className={`h-full ${color}`} style={{ width: `${width}%` }} />
     </div>
   );
@@ -290,7 +290,7 @@ export function ActiveFilterChips(context: DashboardQuery) {
         <Link
           key={chip.label}
           href={chip.href}
-          className="inline-flex min-h-6 items-center gap-1 rounded border border-neutral-800 bg-neutral-950 px-2 text-[10px] font-medium text-neutral-400 hover:border-neutral-700 hover:text-neutral-200"
+          className="inline-flex min-h-10 max-w-full items-center gap-2 rounded-lg border border-neutral-800 px-3 text-xs font-medium text-neutral-400 hover:border-neutral-700 hover:text-neutral-200"
         >
           {chip.label} <span className="text-neutral-600">&times;</span>
         </Link>

@@ -1,4 +1,6 @@
 import { QueryForm } from "@/components/query-form";
+import { FilterSelect } from "@/components/filter-select";
+import { CategoryPicker } from "@/components/category-picker";
 import { ConnectionPanel } from "@/components/connection-panel";
 import { Suspense } from "react";
 import Link from "next/link";
@@ -41,15 +43,10 @@ const NAV_LINKS = [
 const KNOWN_VIEWS = new Set(NAV_LINKS.map((l) => l.key));
 
 function ProjectSelect({ selected, projects = [] }: { selected: string; projects?: string[] }) {
-  return (
-    <label className="grid gap-1">
-      <span className="text-xs font-medium uppercase tracking-wider text-neutral-400">Project</span>
-      <select key={selected} name="project" defaultValue={selected} className="min-h-8 max-w-48 rounded border border-neutral-800 bg-neutral-950 px-2 text-xs text-neutral-100 outline-none focus:border-amber-600/70">
-        <option value="">All projects</option>
-        {Array.from(new Set([selected, ...projects])).filter(Boolean).map((p) => <option key={p} value={p}>{p}</option>)}
-      </select>
-    </label>
-  );
+  return <FilterSelect key={selected} label="Project" name="project" defaultValue={selected} options={[
+    { value: "", label: "All projects" },
+    ...Array.from(new Set([selected, ...projects])).filter(Boolean).map((project) => ({ value: project, label: project })),
+  ]} />;
 }
 
 async function ProjectSelector({ selected }: { selected: string }) {
@@ -79,7 +76,7 @@ export default async function DashboardPage({
       : error === "not_configured" ? "Login is not configured." : null;
 
     return (
-      <div className="max-w-md mx-auto mt-32 text-center">
+      <div className="auth-shell">
         {!isStrongSecret(adminToken) ? (
           <>
             <h2 className="text-xl font-semibold mb-4">Dashboard authentication is not configured</h2>
@@ -87,14 +84,14 @@ export default async function DashboardPage({
           </>
         ) : (
           <>
-            <h2 className="text-xl font-semibold mb-4">Authentication Required</h2>
-            <p className="text-neutral-400 mb-6 text-sm">Enter your access token to continue.</p>
+            <h2 className="font-semibold mb-3">Dashboard access</h2>
+            <p className="text-sm">Enter your access token to view crawler activity.</p>
             {errorMessage ? (
               <p className="mb-4 text-sm text-rose-400">{errorMessage}</p>
             ) : null}
-            <form action="/login" method="POST" className="flex gap-2 justify-center">
-              <input name="token" type="password" placeholder="Access token" className="bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm w-64 text-foreground" />
-              <button type="submit" className="bg-neutral-700 hover:bg-neutral-600 rounded px-4 py-2 text-sm font-medium transition-colors">Submit</button>
+            <form action="/login" method="POST">
+              <label className="filter-field"><span className="field-label">Access token</span><input name="token" type="password" required autoComplete="current-password" className="filter-control" /></label>
+              <button type="submit" className="apply-button">Sign in</button>
             </form>
           </>
         )}
@@ -132,57 +129,51 @@ export default async function DashboardPage({
   const viewCacheKey = JSON.stringify({ view, period, projectFilter, categoryFilter, botFilter, offset: sp.offset ?? "", limit: sp.limit ?? "", path: sp.path ?? "" });
 
   return (
-    <div className="mx-auto max-w-7xl px-5 py-5 text-sm sm:px-6">
-      <div className="mb-5">
-        <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+    <div className="dashboard-shell">
+      <div className="mb-6">
+        <div className="dashboard-controls">
+        <div className="dashboard-heading">
           <div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-xl font-semibold tracking-tight text-white">Crawler activity</h1>
-              <form action="/logout" method="POST">
-                <button type="submit" className="text-xs text-neutral-500 hover:text-neutral-200">Sign out</button>
-              </form>
-            </div>
-            <p className="mt-1 text-xs text-neutral-500">
-              {projectFilter ? `Filtered to ${projectFilter}` : "All projects"} · {range.aggregate ? "Daily aggregates" : range.preset ? periodDescription(periodDays) : "Custom UTC range"} · {formatDateTime(range.start)} → {range.aggregate ? formatDateTime(new Date(range.end.getTime() - 1)) : `before ${formatDateTime(range.end)}`} ·{" "}
-              <Suspense fallback="Latest event…">
-                <LatestEventLabel projectFilter={projectFilter} />
-              </Suspense>
+            <h1>Crawler activity</h1>
+            <p>
+              {projectFilter || "All projects"} <span className="text-neutral-600">/</span> {range.preset ? periodDescription(periodDays) : "Custom UTC range"}{range.aggregate && " · Daily aggregates"}
             </p>
           </div>
-          <QueryForm key={viewCacheKey} context={context} className="flex flex-wrap items-end gap-2">
+          <form action="/logout" method="POST"><button type="submit" className="quiet-button">Sign out</button></form>
+        </div>
+          <QueryForm key={viewCacheKey} context={context} className="dashboard-toolbar">
             <input type="hidden" name="view" value={view} />
-            {categoryFilter && <input type="hidden" name="category" value={categoryFilter} />}
             {(view === "bots" || view === "events") && botFilter && <input type="hidden" name="bot" value={botFilter} />}
             {pathFilter && <input type="hidden" name="path" value={pathFilter} />}
             {view === "events" && <input type="hidden" name="limit" value={context.limit} />}
             {view === "overview" && typeof sp.trend === "string" && <input type="hidden" name="trend" value={sp.trend} />}
             {view === "overview" && typeof sp.cats === "string" && <input type="hidden" name="cats" value={sp.cats} />}
             {view === "overview" && typeof sp.gran === "string" && <input type="hidden" name="gran" value={sp.gran} />}
-            <PeriodPicker key={period} currentPeriod={period} />
             <Suspense fallback={<ProjectSelect selected={projectFilter} />}>
               <ProjectSelector selected={projectFilter} />
             </Suspense>
-            <button type="submit" className="min-h-8 rounded border border-amber-700/45 bg-amber-950/20 px-3 text-xs font-medium text-amber-100 hover:bg-amber-900/30">Apply</button>
+            <PeriodPicker key={period} currentPeriod={period} />
+            <CategoryPicker context={context} />
+            <button type="submit" className="apply-button">Apply filters</button>
           </QueryForm>
         </div>
+          <div className="selection-detail">
+            <span>{formatDateTime(range.start)} → {range.aggregate ? formatDateTime(new Date(range.end.getTime() - 1)) : `before ${formatDateTime(range.end)}`}</span>
+            <span className="latest-selection-event"><span className="selection-separator">·</span><Suspense fallback="Latest event…"><LatestEventLabel projectFilter={projectFilter} /></Suspense></span>
+          </div>
 
-        <div className="overflow-x-auto border-b border-neutral-800">
-          <div className="flex min-w-max items-center gap-1">
+        <nav className="dashboard-tabs" aria-label="Dashboard views">
             {NAV_LINKS.map((l) => (
               <Link
                 key={l.key}
                 href={dashboardHref(context, { view: l.key })}
-                className={`border-b-2 px-3 py-2 text-xs font-medium transition-colors sm:px-4 ${
-                  view === l.key
-                    ? "border-amber-300 text-amber-100"
-                    : "border-transparent text-neutral-500 hover:text-neutral-300"
-                }`}
+                className="dashboard-tab"
+                aria-current={view === l.key ? "page" : undefined}
               >
                 {l.label}
               </Link>
             ))}
-          </div>
-        </div>
+        </nav>
 
         {(() => {
           // "unknown" has no meaningful filter action, and "ai_crawler" is a
@@ -196,24 +187,16 @@ export default async function DashboardPage({
 
           const allActive = !categoryFilter;
           return (
-            <div className="mt-2 flex flex-wrap gap-1.5">
+            <nav className="category-filters" aria-label="Crawler categories">
               <Link
                 href={dashboardHref(context, { category: undefined })}
-                className={`inline-flex items-center gap-1.5 rounded border px-2 py-1 text-xs font-medium transition-colors ${
-                  allActive
-                    ? "border-neutral-600 bg-neutral-800 text-neutral-100"
-                    : "border-neutral-800 bg-neutral-950 text-neutral-500 hover:text-neutral-300"
-                }`}
+                className="category-chip" aria-current={allActive ? "true" : undefined}
               >
                 All
               </Link>
               <Link
                 href={dashboardHref(context, { category: "ai" })}
-                className={`inline-flex items-center gap-1.5 rounded border px-2 py-1 text-xs font-medium transition-colors ${
-                  categoryFilter === "ai"
-                    ? "border-neutral-600 bg-neutral-800 text-neutral-100"
-                    : "border-neutral-800 bg-neutral-950 text-neutral-500 hover:text-neutral-300"
-                }`}
+                className="category-chip" aria-current={categoryFilter === "ai" ? "true" : undefined}
               >
                 <span className="h-1.5 w-1.5 rounded-full bg-amber-300" />
                 All AI
@@ -225,22 +208,18 @@ export default async function DashboardPage({
                   <Link
                     key={cat}
                     href={dashboardHref(context, { category: cat })}
-                    className={`inline-flex items-center gap-1.5 rounded border px-2 py-1 text-xs font-medium transition-colors ${
-                      active
-                        ? "border-neutral-600 bg-neutral-800 text-neutral-100"
-                        : "border-neutral-800 bg-neutral-950 text-neutral-500 hover:text-neutral-300"
-                    }`}
+                    className="category-chip" aria-current={active ? "true" : undefined}
                   >
                     <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />
                     {meta.label}
                   </Link>
                 );
               })}
-            </div>
+            </nav>
           );
         })()}
 
-        <ActiveFilterChips {...context} bot={view === "bots" || view === "events" ? botFilter : undefined} path={pathFilter} />
+        <ActiveFilterChips {...context} project={undefined} bot={view === "bots" || view === "events" ? botFilter : undefined} path={pathFilter} />
       </div>
 
       <Suspense key={viewCacheKey} fallback={<ViewSkeleton view={view} />}>
@@ -258,7 +237,7 @@ export default async function DashboardPage({
         )}
       </Suspense>
 
-      <details className="mt-8 rounded border border-neutral-800 p-4"><summary className="cursor-pointer text-sm text-neutral-300">Website connection{projectFilter ? ` · ${projectFilter}` : ""}</summary><div className="mt-4"><ConnectionPanel project={projectFilter || undefined} /></div></details>
+      <details className="analysis-disclosure mt-6"><summary>Website connection{projectFilter ? ` · ${projectFilter}` : ""}</summary><div><ConnectionPanel project={projectFilter || undefined} /></div></details>
 
       <details className="mt-12 border-t border-neutral-800 pt-4 group">
         <summary className="text-xs text-neutral-500 cursor-pointer hover:text-neutral-300 select-none">

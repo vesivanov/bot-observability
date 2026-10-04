@@ -3,6 +3,9 @@
 import type { ReactNode } from "react";
 import type { TooltipContentProps, TooltipPayloadEntry, TooltipValueType } from "recharts";
 
+export const chartAxisTick = { fill: "#98a29b", fontSize: 12 };
+export const formatChartCount = (value: number) => Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(value);
+
 export const tooltipWrapperStyle = {
   outline: "none",
   pointerEvents: "none",
@@ -39,7 +42,7 @@ export function ChartTooltip({ active, label, payload, formatLabel, valueLabel }
   }
 
   return (
-    <div className="min-w-36 rounded border border-white/10 bg-neutral-900/95 px-3 py-2 text-xs shadow-2xl shadow-black/40 backdrop-blur">
+    <div className="min-w-40 max-w-[280px] rounded-lg border border-white/15 bg-[#1b201d] px-4 py-3 text-[13px] shadow-xl shadow-black/30">
       <div className="mb-1.5 font-medium text-neutral-300">
         {formatLabel ? formatLabel(label, visiblePayload) : label}
       </div>

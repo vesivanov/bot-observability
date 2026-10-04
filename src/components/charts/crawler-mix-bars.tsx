@@ -32,7 +32,7 @@ export function CrawlerMixBars({
   const maxCount = Math.max(...rows.map((row) => row.count), 1);
 
   return (
-    <div className="space-y-1.5">
+    <div className="crawler-mix">
       {rows.map((row) => {
         const isOther = row.bot_category === OTHER_KEY;
         const meta = isOther ? null : categoryMeta(row.bot_category);
@@ -42,25 +42,24 @@ export function CrawlerMixBars({
         const dotColor = isOther ? "bg-neutral-500" : meta!.dot;
         const barColor = isOther ? "bg-neutral-500" : meta!.bar;
         const rowContent = (
-          <div className="grid grid-cols-[9rem_1fr_4.5rem_3rem] items-center gap-2 text-xs sm:grid-cols-[10rem_1fr_5rem_3rem]">
-            <span className="flex min-w-0 items-center gap-1.5 truncate text-neutral-300">
+          <>
+            <span className="crawler-mix-identity">
               <span className={`h-2 w-2 shrink-0 rounded-full ${dotColor}`} />
               <span className="truncate">{label}</span>
             </span>
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-800">
+            <span className="crawler-mix-value">{Math.round(row.count).toLocaleString()}<small>{pctValue}%</small></span>
+            <div className="crawler-mix-bar">
               <div className={`h-full rounded-full ${barColor}`} style={{ width: `${barWidth}%` }} />
             </div>
-            <span className="text-right font-mono text-neutral-100">{row.count.toLocaleString()}</span>
-            <span className="text-right font-mono text-neutral-500">{pctValue}%</span>
-          </div>
+          </>
         );
         return isOther ? (
-          <div key={row.bot_category} className="rounded px-1.5 py-1">{rowContent}</div>
+          <div key={row.bot_category} className="crawler-mix-row">{rowContent}</div>
         ) : (
           <Link
             key={row.bot_category}
             href={categoryHref(row.bot_category)}
-            className="block rounded px-1.5 py-1 transition-colors hover:bg-neutral-900/70"
+            className="crawler-mix-row"
           >
             {rowContent}
           </Link>
