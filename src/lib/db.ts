@@ -27,8 +27,10 @@ import type {
   FailingPath,
   SensitivePathHit,
   NewBot,
+  RequestAnalysis,
 } from "./schema";
 import { statusClassOf } from "./schema";
+import { parseRequestStatus } from "./request-status";
 import { normalizeBotCategory, AI_AGENT_BOTS, AI_SEARCH_BOTS, MONITORING_BOTS } from "./categories";
 import { PATTERNS } from "./bots";
 
@@ -38,6 +40,20 @@ import { PATTERNS } from "./bots";
 // exactly with the integer daily rollup. NULLIF also keeps old malformed rows
 // from dividing by zero.
 const HIT_WEIGHT_SQL = "1.0/NULLIF(sample_rate::text::numeric,0)";
+
+function requestStatusSql(status: string | undefined, values: (string | number)[]): string {
+  const valid = parseRequestStatus(status);
+  if (!valid) return "";
+  if (valid === "unknown") return "AND (status_code < 200 OR status_code >= 600)";
+  if (valid === "errors") return "AND status_code >= 400 AND status_code < 600";
+  if (valid.endsWith("xx")) {
+    const start = Number(valid[0]) * 100;
+    values.push(start, start + 100);
+    return `AND status_code >= $${values.length - 1} AND status_code < $${values.length}`;
+  }
+  values.push(Number(valid));
+  return `AND status_code = $${values.length}`;
+}
 
 // Appends a category filter to `values` and returns the SQL clause referencing it.
 // The pseudo-category "ai" matches all ai_* raw categories via LIKE; any other
@@ -224,11 +240,13 @@ export function createDbClient(databaseUrl: string) {
   async function queryFiltered(params: {
     botName?: string;
     path?: string;
+    prefix?: string;
     project?: string;
     from?: Date;
     to?: Date;
     category?: string;
     confidence?: string;
+    status?: string;
     limit?: number;
     offset?: number;
   }): Promise<BotHitRow[]> {
@@ -245,6 +263,10 @@ export function createDbClient(databaseUrl: string) {
       conditions.push(`path = $${paramIndex++}`);
       values.push(params.path);
     }
+    if (params.prefix) {
+      conditions.push(`starts_with(path, $${paramIndex++})`);
+      values.push(params.prefix);
+    }
     if (params.project) {
       conditions.push(`project_name = $${paramIndex++}`);
       values.push(params.project);
@@ -259,6 +281,11 @@ export function createDbClient(databaseUrl: string) {
     if (params.confidence) {
       conditions.push(`confidence = $${paramIndex++}`);
       values.push(params.confidence);
+    }
+    const statusClause = requestStatusSql(params.status, values);
+    if (statusClause) {
+      conditions.push(statusClause.replace(/^AND\s+/, ""));
+      paramIndex = values.length + 1;
     }
     if (params.from) {
       conditions.push(`created_at >= $${paramIndex++}`);
@@ -279,7 +306,57 @@ export function createDbClient(databaseUrl: string) {
     return sql.unsafe(query, values) as unknown as Promise<BotHitRow[]>;
   }
 
-  async function allBotDetails(from: Date, to: Date, project?: string): Promise<BotDetail[]> {
+  // Exact outcomes and paths come only from retained requests, with the same
+  // sample weights and half-open dates as the dashboard summaries.
+  async function requestAnalysis(params: {
+    from: Date; to: Date; project?: string; category?: string;
+    botName?: string; status?: string; limit?: number; offset?: number;
+    path?: string; prefix?: string;
+  }): Promise<RequestAnalysis> {
+    const values: (string | number)[] = [params.from.toISOString(), params.to.toISOString()];
+    const project = params.project ? `AND project_name = $${values.push(params.project)}` : "";
+    const category = categoryFilterSql(params.category, values);
+    const bot = params.botName ? `AND bot_name = $${values.push(params.botName)}` : "";
+    const path = params.path ? `AND path = $${values.push(params.path)}` : "";
+    const prefix = params.prefix ? `AND starts_with(path, $${values.push(params.prefix)})` : "";
+    const status = requestStatusSql(params.status, values);
+    const limit = `$${values.push(Math.min(100, Math.max(1, params.limit ?? 25)) + 1)}`;
+    const offset = `$${values.push(Math.max(0, params.offset ?? 0))}`;
+    const measures = `SUM(weight)::double precision AS total_hits,
+      COALESCE(SUM(weight) FILTER (WHERE status_code >= 200 AND status_code < 600), 0)::double precision AS known_status_hits,
+      COALESCE(SUM(weight) FILTER (WHERE status_code >= 300 AND status_code < 400), 0)::double precision AS redirect_hits,
+      COALESCE(SUM(weight) FILTER (WHERE status_code >= 400 AND status_code < 600), 0)::double precision AS error_hits,
+      COUNT(DISTINCT (project_name, path))::int AS unique_pages,
+      MAX(created_at)::text AS last_seen`;
+    const result = await sql.unsafe(`WITH scope AS (
+        SELECT *, ${HIT_WEIGHT_SQL} AS weight FROM bot_hits
+        WHERE heartbeat = FALSE AND created_at >= $1 AND created_at < $2 ${project} ${category} ${path} ${prefix}
+      ), base AS (SELECT * FROM scope WHERE TRUE ${bot}),
+      selected AS (SELECT * FROM base WHERE TRUE ${status}),
+      codes AS (
+        SELECT CASE WHEN status_code >= 200 AND status_code < 600 THEN status_code ELSE 0 END AS status_code,
+          SUM(weight)::double precision AS count FROM base GROUP BY 1 ORDER BY count DESC, status_code
+      ), summary AS (SELECT ${measures} FROM selected),
+      bots AS (SELECT bot_name, ${measures} FROM selected GROUP BY bot_name ORDER BY total_hits DESC, bot_name),
+      pages AS (
+        SELECT project_name AS project, path, ${measures}, COUNT(DISTINCT bot_name)::int AS bot_count
+        FROM selected GROUP BY project_name, path ORDER BY total_hits DESC, project_name, path LIMIT ${limit} OFFSET ${offset}
+      ), projects AS (SELECT project_name AS project, SUM(weight)::double precision AS count FROM selected GROUP BY project_name ORDER BY count DESC, project_name),
+      daily AS (SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS date, SUM(weight)::double precision AS count FROM selected GROUP BY 1 ORDER BY 1)
+      SELECT (SELECT row_to_json(summary) FROM summary) AS summary,
+        COALESCE((SELECT json_agg(bot_name ORDER BY bot_name) FROM (SELECT DISTINCT bot_name FROM scope) AS identities), '[]') AS bot_names,
+        COALESCE((SELECT json_agg(codes) FROM codes), '[]') AS codes,
+        COALESCE((SELECT json_agg(bots) FROM bots), '[]') AS bots,
+        COALESCE((SELECT json_agg(pages) FROM pages), '[]') AS pages,
+        COALESCE((SELECT json_agg(projects) FROM projects), '[]') AS projects,
+        COALESCE((SELECT json_agg(daily) FROM daily), '[]') AS daily`, values);
+    const row = result[0];
+    return { summary: { ...row.summary, total_hits: row.summary.total_hits ?? 0 }, botNames: row.bot_names,
+      statusCodes: row.codes, bots: row.bots, pages: row.pages, projects: row.projects,
+      pageCount: row.summary.unique_pages, daily: row.daily };
+  }
+
+  async function allBotDetails(from: Date, to: Date, project?: string, category?: string, status?: string, path?: string, prefix?: string): Promise<BotDetail[]> {
     const normalizeBotDetails = (rows: BotDetail[]) => {
       const totals = new Map<string, BotDetail>();
       for (const row of rows) {
@@ -306,42 +383,21 @@ export function createDbClient(databaseUrl: string) {
       }
       return Array.from(totals.values()).sort((a, b) => b.total_hits - a.total_hits);
     };
-    if (project) {
-      const rows = await sql.unsafe(`
-        SELECT
-          bot_name,
-          bot_category,
-          SUM(${HIT_WEIGHT_SQL})::double precision as total_hits,
-          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified'), 0)::double precision as verified_hits,
-          STRING_AGG(DISTINCT project_name, ', ' ORDER BY project_name) as projects,
-          MAX(created_at)::text as last_seen
-        FROM bot_hits
-        WHERE created_at >= $1
-          AND created_at < $2
-          AND heartbeat = FALSE
-          AND project_name = $3
-        GROUP BY bot_name, bot_category
-        ORDER BY total_hits DESC
-
-      `, [from.toISOString(), to.toISOString(), project]) as unknown as BotDetail[];
-      return normalizeBotDetails(rows);
-    }
+    const values: (string | number)[] = [from.toISOString(), to.toISOString()];
+    const projectClause = project ? `AND project_name = $${values.push(project)}` : "";
+    const categoryClause = categoryFilterSql(category, values);
+    const statusClause = requestStatusSql(status, values);
+    const pathClause = path ? `AND path = $${values.push(path)}` : "";
+    const prefixClause = prefix ? `AND starts_with(path, $${values.push(prefix)})` : "";
     const rows = await sql.unsafe(`
-      SELECT
-        bot_name,
-        bot_category,
-        SUM(${HIT_WEIGHT_SQL})::double precision as total_hits,
-        COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified'), 0)::double precision as verified_hits,
-        STRING_AGG(DISTINCT project_name, ', ' ORDER BY project_name) as projects,
-        MAX(created_at)::text as last_seen
-      FROM bot_hits
-      WHERE created_at >= $1
-        AND created_at < $2
-        AND heartbeat = FALSE
-      GROUP BY bot_name, bot_category
-      ORDER BY total_hits DESC
-
-    `, [from.toISOString(), to.toISOString()]) as unknown as BotDetail[];
+      SELECT bot_name, bot_category,
+        SUM(${HIT_WEIGHT_SQL})::double precision AS total_hits,
+        COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE confidence = 'verified'), 0)::double precision AS verified_hits,
+        STRING_AGG(DISTINCT project_name, ', ' ORDER BY project_name) AS projects,
+        MAX(created_at)::text AS last_seen
+      FROM bot_hits WHERE created_at >= $1 AND created_at < $2 AND heartbeat = FALSE
+        ${projectClause} ${categoryClause} ${statusClause} ${pathClause} ${prefixClause}
+      GROUP BY bot_name, bot_category ORDER BY total_hits DESC`, values) as unknown as BotDetail[];
     return normalizeBotDetails(rows);
   }
 
@@ -584,7 +640,7 @@ export function createDbClient(databaseUrl: string) {
     );
   }
 
-  async function fetchStatusBatch(from: Date, to: Date, project?: string, category?: string) {
+  async function fetchStatusBatch(from: Date, to: Date, project?: string, category?: string, botName?: string) {
     const scLimit = 12;
     const otherLimit = 16;
     const values: (string | number)[] = [from.toISOString(), to.toISOString()];
@@ -595,11 +651,13 @@ export function createDbClient(databaseUrl: string) {
     }
     const categoryClause = categoryFilterSql(category, values);
 
+    const botClause = botName ? `AND bot_name = $${values.push(botName)}` : "";
+
     const result = await sql.unsafe(`
       WITH base AS (
         SELECT * FROM bot_hits
         WHERE created_at >= $1 AND created_at < $2 AND heartbeat = FALSE
-          ${projectClause} ${categoryClause}
+          ${projectClause} ${categoryClause} ${botClause}
       ),
       base_scode AS (
         SELECT * FROM base WHERE status_code >= 200 AND status_code < 600
@@ -1115,7 +1173,7 @@ export function createDbClient(databaseUrl: string) {
   // long-range views (>90d) where scanning raw bot_hits would be too slow.
   // `from`/`to` are timestamps but bot_hits_daily is bucketed by UTC calendar
   // date, so we compare against the UTC date of each boundary.
-  async function fetchRollupStats(from: Date, to: Date, project?: string, category?: string) {
+  async function fetchRollupStats(from: Date, to: Date, project?: string, category?: string, botName?: string) {
     const fromDay = from.toISOString().slice(0, 10);
     const toDay = new Date(to.getTime() - 1).toISOString().slice(0, 10);
     const values: (string | number)[] = [fromDay, toDay];
@@ -1125,6 +1183,7 @@ export function createDbClient(databaseUrl: string) {
       projectClause = `AND project_name = $${values.length}`;
     }
     const categoryClause = categoryFilterSql(category, values);
+    const botClause = botName ? `AND bot_name = $${values.push(botName)}` : "";
 
     // Conditional mirrors of fetchStatsBatch's base_nocat / bot_conf_ai_all —
     // emitted only when a chip filter exists so the unfiltered AI scan is
@@ -1136,7 +1195,7 @@ export function createDbClient(databaseUrl: string) {
         SELECT day, project_name, bot_name, bot_category, status_class, hits, verified_hits
         FROM bot_hits_daily
         WHERE day >= $1::date AND day <= $2::date
-          ${projectClause}
+          ${projectClause} ${botClause}
       )` : "";
     const botConfAiAllCte = hasCategoryFilter ? `,
       bot_conf_ai_all AS (
@@ -1158,7 +1217,7 @@ export function createDbClient(databaseUrl: string) {
         SELECT day, project_name, bot_name, bot_category, status_class, hits, verified_hits
         FROM bot_hits_daily
         WHERE day >= $1::date AND day <= $2::date
-          ${projectClause}
+          ${projectClause} ${botClause}
           ${categoryClause}
       ),
       total AS (
@@ -1413,6 +1472,7 @@ export function createDbClient(databaseUrl: string) {
   return {
     insertHit,
     queryFiltered,
+    requestAnalysis,
     hourlyCounts,
     chronologicalHourlyCounts,
     allBotDetails,

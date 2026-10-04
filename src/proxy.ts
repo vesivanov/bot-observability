@@ -10,7 +10,7 @@ import { NextResponse, type NextRequest } from "next/server";
 // longer change the already-sent 200 status. Next.js instead falls back to
 // a client-side redirect for that request, which degrades non-JS clients and
 // loses the clean 307. Middleware sidesteps the race entirely.
-const KNOWN_VIEWS = new Set(["overview", "bots", "health", "events"]);
+const KNOWN_VIEWS = new Set(["overview", "bots", "pages", "events"]);
 
 // Remembers the last-used project/period across sessions, so a bare
 // `/dashboard` visit (bookmark, new tab, browser restart) returns to where
@@ -25,15 +25,15 @@ export function proxy(request: NextRequest) {
   let changed = false;
 
   const view = searchParams.get("view");
-  if (view === "trends" || view === "pages") {
+  if (view === "trends") {
     searchParams.set("view", "overview");
     changed = true;
   } else if (view === "ai") {
     searchParams.set("view", "bots");
     searchParams.set("category", "ai");
     changed = true;
-  } else if (view === "status") {
-    searchParams.set("view", "health");
+  } else if (view === "status" || view === "health") {
+    searchParams.set("view", "pages");
     changed = true;
   } else if (view === "bot") {
     searchParams.set("view", "bots");

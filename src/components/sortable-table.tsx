@@ -54,10 +54,10 @@ export function SortableTable<Row>({
 
   return (
     <div className="data-table-container responsive-data-table">
-      <div className="mobile-table-sort">
+      <details className="mobile-sort-disclosure"><summary>Sort: {columns.find(column => column.key === sortKey)?.label ?? "Default"} {sortDir === "desc" ? "↓" : "↑"}</summary><div className="mobile-table-sort">
         <FilterSelect label="Sort by" value={sortKey} options={columns.filter((column) => column.sortable).map((column) => ({ value: column.key, label: column.label }))} onChange={setSortKey} />
         <button type="button" className="filter-control" onClick={() => setSortDir((direction) => direction === "desc" ? "asc" : "desc")} aria-label={`Sort ${sortDir === "desc" ? "ascending" : "descending"}`}>{sortDir === "desc" ? "Descending ↓" : "Ascending ↑"}</button>
-      </div>
+      </div></details>
       <table className="data-table w-full text-sm">
         <thead className="text-xs text-neutral-500">
           <tr className="border-b border-neutral-800">

@@ -88,7 +88,7 @@ export function EventsSkeleton() {
 
 export function ViewSkeleton({ view }: { view: string }) {
   if (view === "bots") return <BotsSkeleton />;
-  if (view === "health") return <HealthSkeleton />;
+  if (view === "pages") return <TableSkeleton rows={8} />;
   if (view === "events") return <EventsSkeleton />;
   return <OverviewSkeleton />;
 }

@@ -1,7 +1,9 @@
+import { DashboardFilters } from "@/components/dashboard-filters";
 import { QueryForm } from "@/components/query-form";
 import { FilterSelect } from "@/components/filter-select";
 import { CategoryPicker } from "@/components/category-picker";
 import { ConnectionPanel } from "@/components/connection-panel";
+import { ConnectionButton } from "@/components/connection-button";
 import { Suspense } from "react";
 import Link from "next/link";
 import { cookies } from "next/headers";
@@ -12,6 +14,7 @@ import {
   readDashboardQuery,
   periodDescription,
   formatDateTime,
+  formatRelativeTime,
   getMeta,
   ActiveFilterChips,
 } from "@/app/dashboard/shared";
@@ -19,7 +22,7 @@ import { PeriodPicker } from "@/components/period-picker";
 import { ViewSkeleton } from "@/app/dashboard/skeletons";
 import { OverviewViewServer } from "@/app/dashboard/views/overview";
 import { BotsViewServer } from "@/app/dashboard/views/bots";
-import { HealthViewServer } from "@/app/dashboard/views/health";
+import { PagesViewServer } from "@/app/dashboard/views/pages";
 import { EventsViewServer } from "@/app/dashboard/views/events";
 import { categoryMeta, CATEGORY_ORDER } from "@/lib/categories";
 import {
@@ -36,8 +39,8 @@ const DATABASE_URL = process.env.DATABASE_URL;
 const NAV_LINKS = [
   { key: "overview", label: "Overview" },
   { key: "bots", label: "Bots" },
-  { key: "health", label: "Health" },
-  { key: "events", label: "Raw Events" },
+  { key: "pages", label: "Pages" },
+  { key: "events", label: "Request log" },
 ];
 
 const KNOWN_VIEWS = new Set(NAV_LINKS.map((l) => l.key));
@@ -52,12 +55,6 @@ function ProjectSelect({ selected, projects = [] }: { selected: string; projects
 async function ProjectSelector({ selected }: { selected: string }) {
   const meta = await getMeta(getDb(), undefined);
   return <ProjectSelect selected={selected} projects={meta.allProjects} />;
-}
-
-async function LatestEventLabel({ projectFilter }: { projectFilter: string }) {
-  const db = getDb();
-  const meta = await getMeta(db, projectFilter || undefined);
-  return <>Latest event {meta.latestEvent ? formatDateTime(meta.latestEvent) : "not seen"}</>;
 }
 
 export default async function DashboardPage({
@@ -124,27 +121,29 @@ export default async function DashboardPage({
   const botFilter = (sp.bot as string) ?? "";
 
   const context = { ...readDashboardQuery(sp), view };
-  const pathFilter = view === "events" ? context.path : undefined;
+  const pathFilter = view !== "overview" ? context.path : undefined;
 
-  const viewCacheKey = JSON.stringify({ view, period, projectFilter, categoryFilter, botFilter, offset: sp.offset ?? "", limit: sp.limit ?? "", path: sp.path ?? "" });
+  const viewCacheKey = JSON.stringify(context);
 
   return (
     <div className="dashboard-shell">
-      <div className="mb-6">
+      <div className="dashboard-top">
         <div className="dashboard-controls">
         <div className="dashboard-heading">
           <div>
-            <h1>Crawler activity</h1>
+            <h1>{{ overview: "Crawler overview", bots: "Bot activity", pages: "Page activity", events: "Request log" }[view]}</h1>
             <p>
-              {projectFilter || "All projects"} <span className="text-neutral-600">/</span> {range.preset ? periodDescription(periodDays) : "Custom UTC range"}{range.aggregate && " · Daily aggregates"}
+              {projectFilter || "All projects"} <span className="text-neutral-600">/</span> {range.preset ? periodDescription(periodDays) : "Custom UTC range"}{range.aggregate && " · Daily aggregates"}{categoryFilter && ` · ${categoryFilter === "ai" ? "All AI" : categoryMeta(categoryFilter).label}`}
             </p>
           </div>
-          <form action="/logout" method="POST"><button type="submit" className="quiet-button">Sign out</button></form>
+
         </div>
-          <QueryForm key={viewCacheKey} context={context} className="dashboard-toolbar">
+          <DashboardFilters><QueryForm key={viewCacheKey} context={context} className="dashboard-toolbar">
             <input type="hidden" name="view" value={view} />
-            {(view === "bots" || view === "events") && botFilter && <input type="hidden" name="bot" value={botFilter} />}
+            {view !== "overview" && botFilter && <input type="hidden" name="bot" value={botFilter} />}
+            {view !== "overview" && context.status && <input type="hidden" name="status" value={context.status} />}
             {pathFilter && <input type="hidden" name="path" value={pathFilter} />}
+            {view !== "overview" && context.prefix && <input type="hidden" name="prefix" value={context.prefix} />}
             {view === "events" && <input type="hidden" name="limit" value={context.limit} />}
             {view === "overview" && typeof sp.trend === "string" && <input type="hidden" name="trend" value={sp.trend} />}
             {view === "overview" && typeof sp.cats === "string" && <input type="hidden" name="cats" value={sp.cats} />}
@@ -155,11 +154,11 @@ export default async function DashboardPage({
             <PeriodPicker key={period} currentPeriod={period} />
             <CategoryPicker context={context} />
             <button type="submit" className="apply-button">Apply filters</button>
-          </QueryForm>
+          </QueryForm></DashboardFilters>
         </div>
           <div className="selection-detail">
             <span>{formatDateTime(range.start)} → {range.aggregate ? formatDateTime(new Date(range.end.getTime() - 1)) : `before ${formatDateTime(range.end)}`}</span>
-            <span className="latest-selection-event"><span className="selection-separator">·</span><Suspense fallback="Latest event…"><LatestEventLabel projectFilter={projectFilter} /></Suspense></span>
+            <ConnectionButton receipt={metadata.latestEvent ? `Last request ${formatRelativeTime(metadata.latestEvent, new Date())}` : "Connect website"}><Suspense fallback={<p>Loading connection…</p>}><ConnectionPanel project={projectFilter || undefined} /></Suspense></ConnectionButton>
           </div>
 
         <nav className="dashboard-tabs" aria-label="Dashboard views">
@@ -219,7 +218,7 @@ export default async function DashboardPage({
           );
         })()}
 
-        <ActiveFilterChips {...context} project={undefined} bot={view === "bots" || view === "events" ? botFilter : undefined} path={pathFilter} />
+        <ActiveFilterChips {...context} hideProject bot={view !== "overview" ? botFilter : undefined} status={view !== "overview" ? context.status : undefined} path={pathFilter} prefix={view !== "overview" ? context.prefix : undefined} />
       </div>
 
       <Suspense key={viewCacheKey} fallback={<ViewSkeleton view={view} />}>
@@ -227,19 +226,15 @@ export default async function DashboardPage({
           <OverviewViewServer period={period} periodDays={periodDays} range={range} projectFilter={projectFilter || undefined} categoryFilter={categoryFilter || undefined} />
         )}
         {view === "bots" && (
-          <BotsViewServer period={period} periodDays={periodDays} range={range} projectFilter={projectFilter || undefined} categoryFilter={categoryFilter || undefined} botFilter={botFilter || undefined} />
+          <BotsViewServer period={period} periodDays={periodDays} range={range} projectFilter={projectFilter || undefined} categoryFilter={categoryFilter || undefined} botFilter={botFilter || undefined} statusFilter={context.status} offset={context.offset} pathFilter={pathFilter} prefixFilter={context.prefix} />
         )}
-        {view === "health" && (
-          <HealthViewServer period={period} periodDays={periodDays} range={range} projectFilter={projectFilter || undefined} categoryFilter={categoryFilter || undefined} />
-        )}
+        {view === "pages" && <PagesViewServer context={context} range={range} />}
         {view === "events" && (
           <EventsViewServer searchParams={sp} range={range} />
         )}
       </Suspense>
 
-      <details className="analysis-disclosure mt-6"><summary>Website connection{projectFilter ? ` · ${projectFilter}` : ""}</summary><div><ConnectionPanel project={projectFilter || undefined} /></div></details>
-
-      <details className="mt-12 border-t border-neutral-800 pt-4 group">
+      <details className="mt-6 border-t border-neutral-800 pt-3 group">
         <summary className="text-xs text-neutral-500 cursor-pointer hover:text-neutral-300 select-none">
           Legend &mdash; Bot Categories &amp; Descriptions
         </summary>

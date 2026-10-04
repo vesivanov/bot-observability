@@ -70,7 +70,7 @@ export function StackedBotChart({
       {stacked.series.length === 0 ? (
         <div className="h-64 flex items-center justify-center text-neutral-500 text-sm">No bot activity in this range.</div>
       ) : (
-        <ResponsiveContainer width="100%" height={granularity === "day" ? 300 : 220}>
+        <ResponsiveContainer width="100%" height={granularity === "day" ? 220 : 180}>
           <BarChart data={stacked.data} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.07)" vertical={false} />
             <XAxis
