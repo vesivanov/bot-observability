@@ -32,7 +32,7 @@ export interface BotLegendInfo {
 export const LEGEND_GROUPS: LegendGroup[] = [
   {
     label: "AI Training", description: "Bulk training data collectors", color: "text-amber-300",
-    impact: "Your content → embedded into model weights. No traffic back. Block to opt out of training.",
+    impact: "Requests associated with training-data collection. A request does not prove that content was used to train a model.",
     subs: [
       { label: "OpenAI", examples: "GPTBot", what: "Feeds ChatGPT / GPT model training. Blocking keeps your content out of OpenAI future models." },
       { label: "Anthropic", examples: "ClaudeBot, anthropic-ai", what: "Feeds Claude model training. Blocking prevents use in Anthropic's training pipeline." },
@@ -54,11 +54,11 @@ export const LEGEND_GROUPS: LegendGroup[] = [
   },
   {
     label: "AI Search", description: "Index / retrieval for AI chat products", color: "text-indigo-300",
-    impact: "Your content → cited in AI chat answers. Drives referral traffic via inline citations. Block to remove from AI search.",
+    impact: "Requests associated with AI search and retrieval. These logs do not establish indexing, citations or referral traffic.",
     subs: [
       { label: "OpenAI", examples: "OAI-SearchBot (ChatGPT Search)", what: "Builds the index ChatGPT uses to cite sources in answers. Block → your site won't appear in ChatGPT Search results." },
       { label: "Anthropic", examples: "Claude-SearchBot (Claude Search)", what: "Builds the index Claude uses for search citations. Block → invisible in Claude Search." },
-      { label: "Perplexity", examples: "PerplexityBot", what: "Powers Perplexity AI search results with inline citations. High referral traffic source." },
+      { label: "Perplexity", examples: "PerplexityBot", what: "Crawls content for Perplexity search. A crawl alone does not establish a citation or referral." },
       { label: "Google", examples: "Gemini-Deep-Research", what: "Feeds Gemini's deep research feature. Used when users ask complex research questions." },
       { label: "Meta", examples: "Meta-WebIndexer (meta-webindexer)", what: "Builds the index behind Meta AI's search results — the peer of OAI-SearchBot / Claude-SearchBot. Per Meta's docs this is a search-retrieval crawler, not a training crawler." },
       { label: "DuckDuckGo", examples: "DuckAssistBot", what: "Powers DuckDuckGo AI Assist answers with citations." },
@@ -69,15 +69,15 @@ export const LEGEND_GROUPS: LegendGroup[] = [
   },
   {
     label: "AI Agent", description: "On-demand user-triggered fetches", color: "text-emerald-300",
-    impact: "Single-page fetch when a user asks AI to read a URL. Direct attribution. Blocking hurts user-initiated reads, not bulk crawling.",
+    impact: "Fetches associated with assistant or user actions. Requests are not unique people, sessions, confirmed citations or referrals.",
     subs: [
-      { label: "OpenAI", examples: "ChatGPT-User (browse mode)", what: "Fetches a page when a ChatGPT user pastes a URL or clicks 'browse'. Single request, real-time. Blocking blocks user-initiated page reads." },
+      { label: "OpenAI", examples: "ChatGPT-User (browse mode)", what: "Visits web pages for certain user actions in ChatGPT and custom GPTs. This is separate from automated search crawling." },
       { label: "Anthropic", examples: "Claude-User (on-demand), claude-code", what: "Claude-User fetches a page when a Claude user references a URL, on-demand only. claude-code is Anthropic's CLI coding agent fetching a URL for a user's task." },
       // Claude-Web is intentionally not folded into the "Anthropic" sub above —
       // it is a deprecated, legacy UA whose original semantics are unclear.
       // Do not present it as equivalent to Claude-User.
       { label: "Anthropic (legacy)", examples: "Claude-Web — deprecated", what: "Older Anthropic user agent, now deprecated. Its original semantics are unclear; it behaves more like a general-purpose crawler than a genuine on-demand user fetch. Kept for backward compatibility only." },
-      { label: "Perplexity", examples: "Perplexity-User", what: "On-demand page fetch for Perplexity users. Single request, cited inline." },
+      { label: "Perplexity", examples: "Perplexity-User", what: "On-demand page fetch associated with Perplexity users. A request does not establish a citation." },
       { label: "Google", examples: "Google-Agent, GoogleAgent-URLContext, Google-NotebookLM, Google-GeminiNotebook", what: "Fetches pages for Google's agentic / contextual AI features and for sources added to NotebookLM/Gemini Notebook." },
       { label: "Meta", examples: "Meta-ExternalFetcher", what: "Fetches a page when a user asks a Meta AI product (WhatsApp / Instagram / Messenger) to read a URL. The Meta peer of ChatGPT-User / Claude-User / Perplexity-User." },
       { label: "Mistral", examples: "MistralAI-User", what: "On-demand fetch for Mistral's chat product. User-triggered, single page." },
@@ -198,7 +198,7 @@ const BOT_LEGEND_ENTRIES: BotLegendEntry[] = [
   // ── AI Search ──────────────────────────────────────────────────
   { name: "OAI-SearchBot", group: "AI Search", subLabel: "OpenAI", what: "Builds the index ChatGPT Search uses to cite live sources in answers. Blocking removes your site from ChatGPT Search citations (doesn't affect GPTBot training)." },
   { name: "Claude-SearchBot", group: "AI Search", subLabel: "Anthropic", what: "Builds the index Claude uses to cite sources in web-search-enabled answers. Blocking makes your site invisible to Claude's search feature." },
-  { name: "PerplexityBot", group: "AI Search", subLabel: "Perplexity", what: "Crawls and indexes your site to power Perplexity's AI search answers with inline citations. A significant source of AI referral traffic." },
+  { name: "PerplexityBot", group: "AI Search", subLabel: "Perplexity", what: "Crawls content for Perplexity search. These requests do not measure confirmed citations or referral traffic." },
   { name: "PhindBot", group: "AI Search", subLabel: "Phind", what: "Crawls and indexes your site to power Phind, an AI search engine focused on developers." },
   { name: "Andibot", group: "AI Search", subLabel: "Andi", what: "Crawls and indexes your site to power Andi, an AI-powered conversational search engine." },
   { name: "Gemini-Deep-Research", group: "AI Search", subLabel: "Google", what: "Fetches pages when Gemini's Deep Research feature investigates a multi-step question on a user's behalf." },
@@ -212,13 +212,13 @@ const BOT_LEGEND_ENTRIES: BotLegendEntry[] = [
   { name: "YiyanBot", group: "AI Search", subLabel: "Baidu", what: "Fetches web content for Baidu's Yiyan assistant and related ERNIE-generated answers." },
 
   // ── AI Agent ───────────────────────────────────────────────────
-  { name: "ChatGPT-User", group: "AI Agent", subLabel: "OpenAI", what: "Fetches a single page in real time when a ChatGPT user pastes a URL or the model browses on their behalf. Not bulk crawling — one request per user action." },
+  { name: "ChatGPT-User", group: "AI Agent", subLabel: "OpenAI", what: "Used for certain user actions in ChatGPT and custom GPTs that visit web pages. Request counts do not correspond one-to-one with people or actions." },
   { name: "Claude-User", group: "AI Agent", subLabel: "Anthropic", what: "Fetches a single page in real time when a Claude user references a URL or Claude uses a tool to browse. On-demand only." },
   // Deprecated/legacy — deliberately NOT described as equivalent to
   // Claude-User. See the code comment on this pattern in bots.ts.
   { name: "Claude-Web", group: "AI Agent", subLabel: "Anthropic (legacy)", what: "Deprecated Anthropic user agent. Its original semantics are unclear — it behaves more like a general-purpose crawler than a genuine on-demand user fetch. Kept for backward compatibility; do not assume it's equivalent to Claude-User." },
   { name: "claude-code", group: "AI Agent", subLabel: "Anthropic", what: "Requests made by Claude Code, Anthropic's CLI coding agent, when a user has it fetch a URL as part of a task." },
-  { name: "Perplexity-User", group: "AI Agent", subLabel: "Perplexity", what: "Fetches a single page in real time when a Perplexity user asks about a specific URL. On-demand, cited inline in the answer." },
+  { name: "Perplexity-User", group: "AI Agent", subLabel: "Perplexity", what: "Fetches pages on demand for Perplexity user requests. A fetch does not establish that the page was cited." },
   { name: "GoogleAgent", group: "AI Agent", subLabel: "Google", what: "Fetches pages on behalf of Google's agentic AI features (e.g. Gemini's URL-context / browsing tools) at a user's request. Official token is the hyphenated Google-Agent." },
   { name: "Google-NotebookLM", group: "AI Agent", subLabel: "Google", what: "Fetches a page when a user adds its URL as a source in Google's NotebookLM. Legacy token — Google is migrating to Google-GeminiNotebook; support for this one ends August 2026." },
   { name: "Google-GeminiNotebook", group: "AI Agent", subLabel: "Google", what: "Fetches a page when a user adds its URL as a source in Gemini Notebook. Current token, replacing the legacy Google-NotebookLM." },

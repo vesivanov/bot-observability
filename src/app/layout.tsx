@@ -25,7 +25,7 @@ export default function RootLayout({
               <span aria-hidden="true" className="app-brand-mark"><i /><i /><i /></span>
               Bot Observability
             </Link>
-            <nav className="flex items-center gap-1">
+            <nav id="header-actions" className="flex items-center gap-1" aria-label="Application">
               <Link href="/dashboard" prefetch={false} className="app-header-link">
                 Dashboard
               </Link>

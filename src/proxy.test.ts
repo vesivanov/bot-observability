@@ -15,7 +15,7 @@ describe("proxy — legacy view redirects", () => {
     expect(res.status).not.toBe(307);
   });
 
-  it("redirects trends/pages to overview", () => {
+  it("redirects trends to overview", () => {
     const res = proxy(makeRequest("/dashboard?view=trends"));
     expect(new URL(res.headers.get("location")!, "https://example.com").searchParams.get("view")).toBe("overview");
   });
@@ -32,9 +32,9 @@ describe("proxy — legacy view redirects", () => {
     expect(new URL(res.headers.get("location")!, "https://example.com").searchParams.get("view")).toBe("overview");
   });
 
-  it("redirects status to health", () => {
+  it("redirects status to pages", () => {
     const res = proxy(makeRequest("/dashboard?view=status"));
-    expect(new URL(res.headers.get("location")!, "https://example.com").searchParams.get("view")).toBe("health");
+    expect(new URL(res.headers.get("location")!, "https://example.com").searchParams.get("view")).toBe("pages");
   });
 
   it("redirects the singular bot to bots", () => {
@@ -120,5 +120,15 @@ describe("proxy — remembering last project/period", () => {
     );
     const location = new URL(res.headers.get("location")!, "https://example.com");
     expect(location.searchParams.get("project")).toBe("acme");
+  });
+});
+
+
+describe("Pages navigation compatibility", () => {
+  it("serves Pages directly and redirects legacy Health with all filters intact", () => {
+    expect(proxy(makeRequest("/dashboard?view=pages&period=7")).status).not.toBe(307);
+    const response = proxy(makeRequest("/dashboard?view=health&period=7&project=docs&bot=GPTBot&status=301&path=%2F"));
+    const query = new URL(response.headers.get("location")!, "https://example.com").searchParams;
+    expect(Object.fromEntries(query)).toEqual({view:"pages",period:"7",project:"docs",bot:"GPTBot",status:"301",path:"/"});
   });
 });

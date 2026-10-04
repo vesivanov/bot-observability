@@ -91,7 +91,7 @@ export function buildAttentionFindings(params: {
       findings.push({
         key: "error-rate",
         text: `Error rate ${(currentErrorRate * 100).toFixed(0)}% (was ${(previousErrorRate * 100).toFixed(0)}%)`,
-        href: scopedHref("/dashboard?view=health", period, project),
+        href: scopedHref("/dashboard?view=pages&status=errors", period, project),
         tone: "rose",
       });
     }
@@ -110,6 +110,6 @@ export function buildAttentionFindings(params: {
 
   return findings.slice(0, 4).map((finding) => {
     const selected = new URL(finding.href, "https://collector.test").searchParams;
-    return { ...finding, href: dashboardHref({ view: selected.get("view") ?? "overview", period, project, category: category ?? selected.get("category") ?? undefined, bot: selected.get("bot") ?? undefined }) };
+    return { ...finding, href: dashboardHref({ view: selected.get("view") ?? "overview", period, project, category: category ?? selected.get("category") ?? undefined, bot: selected.get("bot") ?? undefined, status: selected.get("status") ?? undefined }) };
   });
 }

@@ -3,9 +3,7 @@ import { getDb } from "@/app/dashboard/db";
 import { EmptyTrafficState } from "@/components/empty-traffic-state";
 import {
   statsCache,
-  metaCache,
   STATS_CACHE_TTL_MS,
-  META_CACHE_TTL_MS,
   roundToInterval,
   getMeta,
 } from "@/app/dashboard/shared";
@@ -27,70 +25,6 @@ async function getRollupStats(db: DbClient, from: Date, to: Date, project?: stri
   if (cached) return cached;
   const result = await db.fetchRollupStats(from, to, project, category);
   statsCache.set(cacheKey, result, STATS_CACHE_TTL_MS);
-  return result;
-}
-
-async function fetchOverviewExtras(db: DbClient, params: {
-  periodStart: Date;
-  periodEnd: Date;
-  previousPeriodStart: Date;
-  project?: string;
-  category?: string;
-}) {
-  const [botMovers, pageMovers, projectMovers, hourlyData, chronologicalHours] = await Promise.all([
-    db.movers({
-      dimension: "bot",
-      currentFrom: params.periodStart,
-      currentTo: params.periodEnd,
-      previousFrom: params.previousPeriodStart,
-      previousTo: params.periodStart,
-      project: params.project,
-      category: params.category,
-      limit: 5,
-    }),
-    db.movers({
-      dimension: "page",
-      currentFrom: params.periodStart,
-      currentTo: params.periodEnd,
-      previousFrom: params.previousPeriodStart,
-      previousTo: params.periodStart,
-      project: params.project,
-      category: params.category,
-      limit: 5,
-    }),
-    db.movers({
-      dimension: "project",
-      currentFrom: params.periodStart,
-      currentTo: params.periodEnd,
-      previousFrom: params.previousPeriodStart,
-      previousTo: params.periodStart,
-      project: params.project,
-      category: params.category,
-      limit: 5,
-    }),
-    db.hourlyCounts(params.periodStart, params.periodEnd, params.project, params.category),
-    params.periodEnd.getTime() - params.periodStart.getTime() <= 86_400_000 ? db.chronologicalHourlyCounts(params.periodStart, params.periodEnd, params.project, params.category) : Promise.resolve([]),
-  ]);
-  return { botMovers, pageMovers, projectMovers, hourlyData, chronologicalHours };
-}
-
-async function getOverviewExtras(db: DbClient, params: {
-  period: string;
-  now: Date;
-  periodStart: Date;
-  periodEnd: Date;
-  previousPeriodStart: Date;
-  project?: string;
-  category?: string;
-}) {
-  // Keyed on the raw period string (not periodDays) so a preset and a custom
-  // range with the same day-count never collide — they can resolve to
-  // different start/end windows.
-  const cacheKey = `overview-extras:${params.project ?? ""}:${params.category ?? ""}:${params.period}:${params.now.getTime()}`;
-  const cached = metaCache.get<Awaited<ReturnType<typeof fetchOverviewExtras>>>(cacheKey);
-  if (cached) return cached;
-  const result = await fetchOverviewExtras(db, params);
-  metaCache.set(cacheKey, result, META_CACHE_TTL_MS);
   return result;
 }
 
@@ -159,7 +93,6 @@ export async function OverviewViewServer({
             previousStats={previousStats}
             dailyTrend={currentRollup.dailyTrend}
             dailyCategoryTrend={currentRollup.dailyCategoryTrend}
-            hourlyData={[]}
             trendPercent={trendPercent}
             period={period}
             periodDays={periodDays}
@@ -170,7 +103,6 @@ export async function OverviewViewServer({
             rangeStart={periodStart}
             rangeEnd={periodEnd}
             referenceTime={now}
-            movers={{ bots: [], pages: [], projects: [] }}
             isLongRange
           />
         </div>
@@ -183,7 +115,6 @@ export async function OverviewViewServer({
         previousStats={previousStats}
         dailyTrend={currentRollup.dailyTrend}
         dailyCategoryTrend={currentRollup.dailyCategoryTrend}
-        hourlyData={[]}
         trendPercent={trendPercent}
         period={period}
         periodDays={periodDays}
@@ -194,7 +125,6 @@ export async function OverviewViewServer({
         rangeStart={periodStart}
         rangeEnd={periodEnd}
         referenceTime={now}
-        movers={{ bots: [], pages: [], projects: [] }}
         isLongRange
       />
     );
@@ -204,7 +134,7 @@ export async function OverviewViewServer({
     getStats(db, periodStart, periodEnd, projectFilter, categoryFilter),
     getStats(db, previousPeriodStart, periodStart, projectFilter, categoryFilter),
     getMeta(db, projectFilter),
-    getOverviewExtras(db, { period, now, periodStart, periodEnd, previousPeriodStart, project: projectFilter, category: categoryFilter }),
+    periodDays === 1 ? db.chronologicalHourlyCounts(periodStart, periodEnd, projectFilter, categoryFilter) : Promise.resolve([]),
   ]);
 
   const prevTotal = previousStats.total;
@@ -219,8 +149,7 @@ export async function OverviewViewServer({
           previousStats={previousStats}
           dailyTrend={currentStats.dailyTrend}
           dailyCategoryTrend={currentStats.dailyCategoryTrend}
-          hourlyData={extras.hourlyData}
-          chronologicalHours={extras.chronologicalHours}
+          chronologicalHours={extras}
           trendPercent={trendPercent}
           period={period}
           periodDays={periodDays}
@@ -231,7 +160,6 @@ export async function OverviewViewServer({
           rangeStart={periodStart}
           rangeEnd={periodEnd}
           referenceTime={now}
-          movers={{ bots: extras.botMovers, pages: extras.pageMovers, projects: extras.projectMovers }}
           isLongRange={false}
         />
       </div>
@@ -244,8 +172,7 @@ export async function OverviewViewServer({
       previousStats={previousStats}
       dailyTrend={currentStats.dailyTrend}
       dailyCategoryTrend={currentStats.dailyCategoryTrend}
-      hourlyData={extras.hourlyData}
-          chronologicalHours={extras.chronologicalHours}
+          chronologicalHours={extras}
       trendPercent={trendPercent}
       period={period}
       periodDays={periodDays}
@@ -256,7 +183,6 @@ export async function OverviewViewServer({
       rangeStart={periodStart}
       rangeEnd={periodEnd}
       referenceTime={now}
-      movers={{ bots: extras.botMovers, pages: extras.pageMovers, projects: extras.projectMovers }}
       isLongRange={false}
     />
   );

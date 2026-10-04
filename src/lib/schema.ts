@@ -259,6 +259,37 @@ export interface BotDetail {
   last_seen: string;
 }
 
+export interface RequestOutcomes {
+  total_hits: number;
+  known_status_hits: number;
+  redirect_hits: number;
+  error_hits: number;
+  unique_pages: number;
+  last_seen?: string | null;
+}
+
+export interface BotRequestOutcomes extends RequestOutcomes {
+  bot_name: string;
+}
+
+export interface PageRequestOutcomes extends RequestOutcomes {
+  project: string;
+  path: string;
+  last_seen: string;
+  bot_count: number;
+}
+
+export interface RequestAnalysis {
+  summary: RequestOutcomes;
+  botNames: string[];
+  statusCodes: { status_code: number; count: number }[];
+  bots: BotRequestOutcomes[];
+  pages: PageRequestOutcomes[];
+  projects: { project: string; count: number }[];
+  pageCount: number;
+  daily: DailyCount[];
+}
+
 // Rollup-backed variant of BotDetail (long-range views) — adds first_seen,
 // sourced from bot_first_seen rather than MIN(created_at) on raw rows.
 export interface RollupBotDetail extends BotDetail {

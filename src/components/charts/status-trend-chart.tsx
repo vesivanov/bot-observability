@@ -35,7 +35,7 @@ export function StatusTrendChart({ data, from, to }: { data: DailyStatusCount[];
   const presentClasses = CLASSES.filter((cls) => data.some((row) => row.status_class === cls && row.count > 0));
 
   return (
-    <ResponsiveContainer width="100%" height={260}>
+    <ResponsiveContainer width="100%" height={210}>
       <AreaChart data={series} margin={{ top: 6, right: 8, left: -16, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.07)" vertical={false} />
         <XAxis

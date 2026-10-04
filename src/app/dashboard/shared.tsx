@@ -53,6 +53,7 @@ export const metaCache = new TtlCache();
 // silently mislabeling a non-Berlin viewer's time as their own local time.
 export function formatDateTime(value: string | Date) {
   return new Date(value).toLocaleString("en-US", {
+    year: "numeric",
     month: "short",
     day: "numeric",
     hour: "numeric",
@@ -74,7 +75,9 @@ export function formatRelativeTime(date: Date | null, referenceTime: Date) {
 }
 
 export function pct(part: number, total: number) {
-  return total > 0 ? Math.round((part / total) * 100) : 0;
+  if (total <= 0 || part <= 0) return 0;
+  const percentage = (part / total) * 100;
+  return percentage < 0.1 ? Number(percentage.toPrecision(1)) : Math.round(percentage * 10) / 10;
 }
 
 // -- Shared metric conventions: the same metric (error rate, verified share)
@@ -104,6 +107,7 @@ export function knownStatusAccent(knownStatusPct: number): string {
 }
 
 import { dashboardHref, type DashboardQuery } from "@/lib/query-context";
+import { requestStatusLabel } from "@/lib/request-status";
 export { dashboardHref, readDashboardQuery } from "@/lib/query-context";
 
 export function eventHref(params: DashboardQuery) {
@@ -170,17 +174,23 @@ export function StatTile({
   value,
   detail,
   accent = "text-neutral-100",
+  href,
 }: {
   label: string;
   value: string;
   detail?: string;
   accent?: string;
+  href?: string;
 }) {
+  const contents = <>
+    <p className="stat-label">{label}</p>
+    <p className={`stat-value ${value.length > 14 && /[a-z]/i.test(value) ? "stat-value-text" : ""} ${accent}`}>{value}</p>
+    {detail ? <p className="stat-detail">{detail}</p> : null}
+  </>;
+  if (href) return <Link href={href} className="stat-tile stat-tile-link">{contents}</Link>;
   return (
     <div className="stat-tile">
-      <p className="stat-label">{label}</p>
-      <p className={`stat-value ${value.length > 14 && /[a-z]/i.test(value) ? "stat-value-text" : ""} ${accent}`}>{value}</p>
-      {detail ? <p className="stat-detail">{detail}</p> : null}
+      {contents}
     </div>
   );
 }
@@ -278,10 +288,11 @@ export function statusClassLabel(statusClass: string) {
 // aren't already visible as the active state of another control (project,
 // bot). Category is intentionally excluded — the category chip row already
 // shows its own active state. --
-export function ActiveFilterChips(context: DashboardQuery) {
+export function ActiveFilterChips({ hideProject = false, ...context }: DashboardQuery & { hideProject?: boolean }) {
   const chips: { label: string; href: string }[] = [];
-  for (const key of ["project", "bot", "path"] as const) {
-    if (context[key]) chips.push({ label: `${key}: ${context[key]}`, href: dashboardHref(context, { [key]: undefined }) });
+  for (const key of ["project", "bot", "path", "prefix", "status"] as const) {
+    if (hideProject && key === "project") continue;
+    if (context[key]) chips.push({ label: `${key}: ${key === "status" ? requestStatusLabel(context[key]) : context[key]}`, href: dashboardHref(context, { [key]: undefined }) });
   }
   if (chips.length === 0) return null;
   return (

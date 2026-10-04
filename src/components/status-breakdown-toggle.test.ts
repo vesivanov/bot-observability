@@ -10,8 +10,8 @@ describe("Health evidence links", () => {
       botStatusCodes: [], pageStatusCodes: [],
       period: "2026-09-25_2026-10-02", projectFilter: "docs", categoryFilter: "ai_agent",
     })).replaceAll("&amp;", "&");
-    const href = html.match(/href="([^"]+)"/)?.[1];
+    const href = [...html.matchAll(/href="([^"]+)"/g)].map(match => match[1]).find(href => new URL(href, "https://collector.test").searchParams.has("path"));
     const query = new URL(href!, "https://collector.test").searchParams;
-    expect(Object.fromEntries(query)).toMatchObject({ view: "events", period: "2026-09-25_2026-10-02", project: "docs", category: "ai_agent", path: "/pricing" });
+    expect(Object.fromEntries(query)).toMatchObject({ view: "events", period: "2026-09-25_2026-10-02", project: "docs", category: "ai_agent", path: "/pricing", status: "302" });
   });
 });
