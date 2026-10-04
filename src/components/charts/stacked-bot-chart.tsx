@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
-import { ChartTooltip, activeBarStyle, barCursor, tooltipWrapperStyle } from "@/components/charts/chart-tooltip";
+import { ChartTooltip, activeBarStyle, barCursor, tooltipWrapperStyle, chartAxisTick, formatChartCount } from "@/components/charts/chart-tooltip";
 import { categoryMeta } from "@/lib/categories";
 import { BotName } from "@/components/bot-name";
 
@@ -75,13 +75,14 @@ export function StackedBotChart({
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.07)" vertical={false} />
             <XAxis
               dataKey="period"
-              tick={{ fill: "#737373", fontSize: granularity === "week" ? 10 : 11 }}
+              tick={chartAxisTick}
+              minTickGap={28}
               tickLine={false}
               axisLine={false}
               tickFormatter={(period: string) => periodLabel(period, granularity)}
-              interval={granularity === "day" ? "preserveStartEnd" : 0}
+              interval="preserveStartEnd"
             />
-            <YAxis tick={{ fill: "#737373", fontSize: 11 }} tickLine={false} axisLine={false} width={40} />
+            <YAxis tickFormatter={formatChartCount} tick={chartAxisTick} tickLine={false} axisLine={false} width={48} />
             <Tooltip
               content={<ChartTooltip formatLabel={(label) => periodLabel(String(label), granularity)} />}
               cursor={barCursor}
@@ -99,6 +100,7 @@ export function StackedBotChart({
                   fill={isOther ? OTHER_COLOR : meta!.color}
                   fillOpacity={isOther ? 0.55 : 0.82}
                   maxBarSize={42}
+                  isAnimationActive={false}
                   activeBar={activeBarStyle}
                 />
               );
@@ -107,7 +109,7 @@ export function StackedBotChart({
         </ResponsiveContainer>
       )}
       {stacked.series.length > 0 ? (
-        <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-neutral-500">
+        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-neutral-500">
           {stacked.bots.map((bot) => {
             const meta = categoryMeta(stacked.categories.get(bot) ?? "unknown");
             return (
@@ -139,12 +141,12 @@ function periodLabel(period: string, granularity: "day" | "week" | "month") {
 
 function ChartPanel({ title, meta, children }: { title: string; meta?: string; children: ReactNode }) {
   return (
-    <section className="rounded border border-neutral-800/90 bg-neutral-950 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
-      <div className="flex min-h-10 items-center justify-between gap-4 border-b border-neutral-800/80 px-3 py-2">
+    <section className="data-panel">
+      <div className="data-panel-header">
         <h3 className="text-sm font-medium text-neutral-100">{title}</h3>
-        {meta ? <span className="text-xs text-neutral-500">{meta}</span> : null}
+        {meta ? <span className="data-panel-meta">{meta}</span> : null}
       </div>
-      <div className="p-3">{children}</div>
+      <div className="data-panel-body">{children}</div>
     </section>
   );
 }

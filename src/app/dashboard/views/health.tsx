@@ -83,7 +83,7 @@ export async function HealthViewServer({
 
     return (
       <div className="space-y-4">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="metrics-grid">
           <StatTile label="Known status" value={`${pct(rollup.knownStatusHits, rollup.total)}%`} detail={`${rollup.knownStatusHits.toLocaleString()} of ${rollup.total.toLocaleString()} hits`} />
           <StatTile label="Error rate" value={rollup.knownStatusHits > 0 ? `${pct(rollup.errorHits, rollup.knownStatusHits)}%` : "Unknown"} detail={`${rollup.errorHits.toLocaleString()} 4xx/5xx hits`} accent={errorRateAccent(pct(rollup.errorHits, rollup.knownStatusHits))} />
           <StatTile label="4xx hits" value={clientErrorHits.toLocaleString()} detail="Client errors" accent={clientErrorHits > 0 ? "text-orange-300" : "text-neutral-300"} />
@@ -128,7 +128,7 @@ export async function HealthViewServer({
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="metrics-grid metrics-grid-five">
         <StatTile label="Known status" value={`${pct(summary.known_status_hits, summary.total_hits)}%`} detail={`${summary.known_status_hits.toLocaleString()} of ${summary.total_hits.toLocaleString()} hits`} accent={knownStatusAccent(pct(summary.known_status_hits, summary.total_hits))} />
         <StatTile label="Error rate" value={summary.known_status_hits > 0 ? `${pct(errorHits, summary.known_status_hits)}%` : "Unknown"} detail={`${errorHits.toLocaleString()} 4xx/5xx hits`} accent={errorRateAccent(pct(errorHits, summary.known_status_hits))} />
         <StatTile label="4xx hits" value={summary.client_error_hits.toLocaleString()} detail="Client errors" accent={summary.client_error_hits > 0 ? "text-orange-300" : "text-neutral-300"} />
@@ -198,8 +198,8 @@ export async function HealthViewServer({
           {botStatuses.length === 0 ? (
             <p className="text-sm text-neutral-500">No error or UA-only requests in this selection.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
+            <div className="responsive-data-table">
+              <table className="data-table w-full">
                 <thead className="text-neutral-500">
                   <tr className="border-b border-neutral-800">
                     <th className="px-2 py-2 text-left font-medium">Bot</th>
@@ -213,14 +213,14 @@ export async function HealthViewServer({
                 <tbody>
                   {botStatuses.map((bot) => (
                     <tr key={`${bot.bot_name}:${bot.bot_category}`} className="border-t border-neutral-800 hover:bg-neutral-900">
-                      <td className="px-2 py-2 font-medium text-neutral-100">
+                      <td data-label="Bot" className="px-2 py-2 font-medium text-neutral-100">
                         <BotName name={bot.bot_name} href={botHref({ bot: bot.bot_name, project: projectFilter, category: categoryFilter, period })} className="hover:text-white" />
                       </td>
-                      <td className="px-2 py-2"><NormalizedCategoryChip botName={bot.bot_name} category={bot.bot_category} /></td>
-                      <td className="px-2 py-2 text-right font-mono text-orange-300">{bot.error_hits.toLocaleString()}</td>
-                      <td className="px-2 py-2 text-right font-mono text-neutral-400">{bot.known_status_hits > 0 ? `${pct(bot.error_hits, bot.known_status_hits)}%` : "Unknown"} · {pct(bot.known_status_hits, bot.total_hits)}% coverage</td>
-                      <td className="px-2 py-2 text-right font-mono text-amber-300">{bot.ua_only_hits.toLocaleString()}</td>
-                      <td className="px-2 py-2 text-right"><StatusCodeChip statusCode={bot.top_status_code} /></td>
+                      <td data-label="Type" className="px-2 py-2"><NormalizedCategoryChip botName={bot.bot_name} category={bot.bot_category} /></td>
+                      <td data-label="Errors" className="px-2 py-2 text-right font-mono text-orange-300">{bot.error_hits.toLocaleString()}</td>
+                      <td data-label="Error rate" className="px-2 py-2 text-right font-mono text-neutral-400">{bot.known_status_hits > 0 ? `${pct(bot.error_hits, bot.known_status_hits)}%` : "Unknown"} · {pct(bot.known_status_hits, bot.total_hits)}% coverage</td>
+                      <td data-label="UA only" className="px-2 py-2 text-right font-mono text-amber-300">{bot.ua_only_hits.toLocaleString()}</td>
+                      <td data-label="Top status" className="px-2 py-2 text-right"><StatusCodeChip statusCode={bot.top_status_code} /></td>
                     </tr>
                   ))}
                 </tbody>
@@ -238,7 +238,7 @@ export async function HealthViewServer({
                 <Link key={`${path.project}:${path.status_code}:${path.path}`} href={eventHref({ project: path.project, path: path.path, category: categoryFilter, period })} className="block rounded border border-neutral-800/90 bg-neutral-950 px-3 py-2 hover:bg-neutral-900/70">
                   <div className="flex items-center justify-between gap-3">
                     <span className="min-w-0">
-                      <span className="block truncate font-mono text-xs text-neutral-100">{path.path}</span>
+                      <span className="block break-all font-mono text-xs leading-relaxed text-neutral-100">{path.path}</span>
                       <span className="mt-1 block text-xs text-neutral-500">{path.project} · {path.top_bot ? <BotName name={path.top_bot} className="text-neutral-500" /> : "Unknown bot"}</span>
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
@@ -262,7 +262,7 @@ export async function HealthViewServer({
               <Link key={`${hit.project}:${hit.path}`} href={eventHref({ project: hit.project, path: hit.path, category: categoryFilter, period })} className="block rounded border border-neutral-800/90 bg-neutral-950 px-3 py-2 hover:bg-neutral-900/70">
                 <div className="flex items-center justify-between gap-3">
                   <span className="min-w-0">
-                    <span className="block truncate font-mono text-xs text-neutral-100">{hit.path}</span>
+                    <span className="block break-all font-mono text-xs leading-relaxed text-neutral-100">{hit.path}</span>
                     <span className="mt-1 block text-xs text-neutral-500">{hit.project} · {hit.top_bot ? <BotName name={hit.top_bot} className="text-neutral-500" /> : "Unknown bot"}</span>
                   </span>
                   <span className="font-mono text-xs font-semibold text-neutral-100">{hit.count.toLocaleString()}</span>

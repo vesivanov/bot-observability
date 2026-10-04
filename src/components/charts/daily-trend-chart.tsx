@@ -11,7 +11,7 @@ import {
   ResponsiveContainer,
   CartesianGrid,
 } from "recharts";
-import { ChartTooltip, axisCursor, tooltipWrapperStyle } from "@/components/charts/chart-tooltip";
+import { ChartTooltip, axisCursor, tooltipWrapperStyle, chartAxisTick, formatChartCount } from "@/components/charts/chart-tooltip";
 import { categoryMeta, categoryShortLabel, sortCategories } from "@/lib/categories";
 import { fillDatePeriods } from "@/lib/date-buckets";
 
@@ -136,7 +136,7 @@ export function DailyTrendChart({ data, granularity = "day" }: { data: DailyCoun
   }
 
   return (
-    <ResponsiveContainer width="100%" height={200}>
+    <ResponsiveContainer width="100%" height={240}>
       <AreaChart data={data} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
         <defs>
           <linearGradient id="trendFill" x1="0" y1="0" x2="0" y2="1">
@@ -148,19 +148,22 @@ export function DailyTrendChart({ data, granularity = "day" }: { data: DailyCoun
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.07)" vertical={false} />
         <XAxis
           dataKey="date"
-          tick={{ fill: "#737373", fontSize: 11 }}
+          tick={chartAxisTick}
+          minTickGap={28}
+          interval="preserveStartEnd"
           tickLine={false}
           axisLine={false}
           tickFormatter={(d) => formatBucketLabel(d, granularity)}
         />
         <YAxis
-          tick={{ fill: "#737373", fontSize: 11 }}
+          tickFormatter={formatChartCount}
+          tick={chartAxisTick}
           tickLine={false}
           axisLine={false}
-          width={40}
+          width={48}
         />
         <Tooltip
-          content={<ChartTooltip valueLabel="Hits" formatLabel={(label) => formatBucketTooltipLabel(String(label), granularity)} />}
+          content={<ChartTooltip valueLabel="Requests" formatLabel={(label) => formatBucketTooltipLabel(String(label), granularity)} />}
           cursor={axisCursor}
           isAnimationActive={false}
           wrapperStyle={tooltipWrapperStyle}
@@ -170,6 +173,7 @@ export function DailyTrendChart({ data, granularity = "day" }: { data: DailyCoun
           dataKey="count"
           stroke="#fbbf24"
           strokeWidth={2}
+          isAnimationActive={false}
           fill="url(#trendFill)"
           dot={false}
           activeDot={{ r: 4, fill: "#fcd34d", stroke: "#120f08", strokeWidth: 2 }}
@@ -237,17 +241,13 @@ export function DailyTrendDashboard({
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <div className="inline-flex rounded border border-neutral-800 bg-neutral-950 p-0.5">
+        <div className="chart-segments">
           {(["total", "category"] as const).map((option) => (
             <button
               key={option}
               type="button"
               onClick={() => setMode(option)}
-              className={`min-h-7 rounded-sm px-3 text-xs font-medium transition-colors ${
-                mode === option
-                  ? "bg-neutral-800 text-neutral-100"
-                  : "text-neutral-500 hover:text-neutral-300"
-              }`}
+              className="transition-colors"
               aria-pressed={mode === option}
             >
               {option === "total" ? "Total" : "By category"}
@@ -255,17 +255,13 @@ export function DailyTrendDashboard({
           ))}
         </div>
         {allowedGranularities.length > 1 && (
-          <div className="inline-flex rounded border border-neutral-800 bg-neutral-950 p-0.5">
+          <div className="chart-segments">
             {allowedGranularities.map((option) => (
               <button
                 key={option}
                 type="button"
                 onClick={() => setGranularity(option)}
-                className={`min-h-7 rounded-sm px-2.5 text-xs font-medium capitalize transition-colors ${
-                  granularity === option
-                    ? "bg-neutral-800 text-neutral-100"
-                    : "text-neutral-500 hover:text-neutral-300"
-                }`}
+                className="capitalize transition-colors"
                 aria-pressed={granularity === option}
               >
                 {option}
@@ -354,7 +350,7 @@ export function DailyCategoryTrendChart({
             >
               <span className="h-2 w-2 rounded-full" style={{ backgroundColor: active ? seriesColor(category) : "#404040" }} />
               <span>{seriesLabel(category)}</span>
-              <span className="font-mono text-[11px] tabular-nums text-neutral-500">{(totals.get(category) ?? 0).toLocaleString()}</span>
+              <span className="font-mono text-xs tabular-nums text-neutral-500">{(totals.get(category) ?? 0).toLocaleString()}</span>
             </button>
           );
         })}
@@ -369,13 +365,14 @@ export function DailyCategoryTrendChart({
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.07)" vertical={false} />
             <XAxis
               dataKey="date"
-              tick={{ fill: "#737373", fontSize: 11 }}
+              tick={chartAxisTick}
+              minTickGap={28}
               tickLine={false}
               axisLine={false}
               tickFormatter={(d) => formatBucketLabel(d, granularity)}
               interval="preserveStartEnd"
             />
-            <YAxis tick={{ fill: "#737373", fontSize: 11 }} tickLine={false} axisLine={false} width={40} />
+            <YAxis tickFormatter={formatChartCount} tick={chartAxisTick} tickLine={false} axisLine={false} width={48} />
             <Tooltip
               content={<ChartTooltip formatLabel={(label) => formatBucketTooltipLabel(String(label), granularity)} />}
               cursor={axisCursor}

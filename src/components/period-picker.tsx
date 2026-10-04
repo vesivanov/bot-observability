@@ -2,16 +2,17 @@
 
 import { useState } from "react";
 import { PERIODS } from "@/app/dashboard/shared";
+import { FilterSelect } from "./filter-select";
 
 const CUSTOM_RE = /^(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})$/;
 
-const selectClass = "min-h-8 rounded border border-neutral-800 bg-neutral-950 px-2 text-xs text-neutral-100 outline-none focus:border-amber-600/70";
-const labelClass = "text-[10px] font-medium uppercase tracking-wider text-neutral-600";
+const selectClass = "filter-control";
+const labelClass = "field-label";
 
 // Replaces the bare `<select name="period">` in page.tsx's Apply form.
 // Keeps the same GET-form contract: a single hidden `period` input carries
 // either a preset value ("7") or a custom range ("YYYY-MM-DD_YYYY-MM-DD") on
-// submit, so no client-side navigation/JS is required to apply it.
+// submit. QueryForm applies it without losing the other selected filters.
 export function PeriodPicker({ currentPeriod }: { currentPeriod: string }) {
   const customMatch = CUSTOM_RE.exec(currentPeriod);
   const isPreset = PERIODS.some((p) => p.value === currentPeriod);
@@ -24,33 +25,25 @@ export function PeriodPicker({ currentPeriod }: { currentPeriod: string }) {
   const hiddenValue = mode === "custom" && start && end ? `${start}_${end}` : preset;
 
   return (
-    <div className="flex flex-wrap items-end gap-2">
-      <label className="grid gap-1">
-        <span className={labelClass}>Period</span>
-        <select
+    <div className="period-picker">
+        <FilterSelect label="Period" options={[...PERIODS, { value: "custom", label: "Custom range" }]}
           value={mode === "custom" ? "custom" : preset}
-          onChange={(e) => {
-            if (e.target.value === "custom") {
+          onChange={(value) => {
+            if (value === "custom") {
               setMode("custom");
             } else {
               setMode("preset");
-              setPreset(e.target.value);
+              setPreset(value);
             }
           }}
-          className={selectClass}
-        >
-          {PERIODS.map((p) => (
-            <option key={p.value} value={p.value}>{p.label}</option>
-          ))}
-          <option value="custom">Custom…</option>
-        </select>
-      </label>
+        />
       {mode === "custom" && (
         <>
           <label className="grid gap-1">
             <span className={labelClass}>From</span>
             <input
               type="date"
+              required
               value={start}
               onChange={(e) => setStart(e.target.value)}
               max={end || undefined}
@@ -61,6 +54,7 @@ export function PeriodPicker({ currentPeriod }: { currentPeriod: string }) {
             <span className={labelClass}>To</span>
             <input
               type="date"
+              required
               value={end}
               onChange={(e) => setEnd(e.target.value)}
               min={start || undefined}

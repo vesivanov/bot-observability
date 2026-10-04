@@ -404,7 +404,7 @@ export default async function HomePage() {
       <section id="get-started" className="mt-10 border-t border-neutral-800 pt-8">
         <h2 className="text-sm font-semibold text-neutral-200">Get started</h2>
         <p className="mt-3 max-w-2xl text-xs leading-5 text-neutral-500">
-          Requires Node.js 20+ and a Postgres database (Aiven, Neon, or any standard Postgres). Clone the repo, then:
+          Use Node.js 24 and a Postgres database (Aiven, Neon, or any standard Postgres). Clone the repo, then:
         </p>
         <pre className="mt-3 overflow-x-auto rounded border border-neutral-800 bg-neutral-950 p-3 font-mono text-xs leading-6 text-neutral-300">
 {`npm install
@@ -412,7 +412,7 @@ npm run setup     # creates .env with secrets + runs migrations
 npm run dev`}
         </pre>
         <p className="mt-3 max-w-2xl text-xs leading-5 text-neutral-500">
-          Open <span className="font-mono text-neutral-300">/dashboard</span> and sign in with your <span className="font-mono text-neutral-300">BOT_ADMIN_TOKEN</span>. Empty dashboard? Press <span className="font-mono text-neutral-300">Send test hit</span> for one real event, then wire your site with the 10-line sender in the{" "}
+          Open <span className="font-mono text-neutral-300">/dashboard</span> and sign in with your <span className="font-mono text-neutral-300">BOT_ADMIN_TOKEN</span>. Open <span className="font-mono text-neutral-300">Website connection</span> to install the sender and verify a website probe. Probes do not add bot traffic. Installation and connection steps are in the{" "}
           <a href={`${REPO_URL}#readme`} target="_blank" rel="noopener noreferrer" className="text-neutral-300 underline decoration-neutral-700 underline-offset-2 hover:text-white">
             README
           </a>.

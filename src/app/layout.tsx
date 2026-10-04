@@ -19,13 +19,14 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full antialiased">
       <body className="min-h-full flex flex-col">
-        <header className="border-b border-neutral-800 px-5 py-3 sm:px-6">
-          <div className="max-w-7xl mx-auto flex min-h-8 items-center justify-between">
-            <Link href="/" className="text-sm font-semibold tracking-tight text-neutral-100 hover:text-white">
+        <header className="app-header">
+          <div className="app-header-inner">
+            <Link href="/" className="app-brand">
+              <span aria-hidden="true" className="app-brand-mark"><i /><i /><i /></span>
               Bot Observability
             </Link>
             <nav className="flex items-center gap-1">
-              <Link href="/dashboard" prefetch={false} className="text-sm font-medium text-neutral-400 hover:text-neutral-100">
+              <Link href="/dashboard" prefetch={false} className="app-header-link">
                 Dashboard
               </Link>
             </nav>

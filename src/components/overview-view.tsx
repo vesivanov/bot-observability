@@ -123,26 +123,26 @@ export function OverviewView({
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="metrics-grid">
         <StatTile
           label="Request volume"
-          detail="Estimated when sampling is used"
+          detail="Estimated if sampled"
           value={stats.total.toLocaleString()}
         />
         <StatTile
-          label="vs previous period"
+          label="Period change"
           value={trendLabel}
           detail={trendSubtitle}
         />
         <StatTile
           label="AI share"
           value={`${aiPct.toFixed(1)}%`}
-          detail={`${Math.round(aiCount).toLocaleString()} AI bot requests`}
+          detail={`${Math.round(aiCount).toLocaleString()} AI requests`}
         />
         <StatTile
           label="Error rate"
           value={stats.knownStatusHits > 0 ? `${errorRate}%` : "Unknown"}
-          detail={`${Math.round(stats.errorHits).toLocaleString()} errors · ${pct(stats.knownStatusHits, stats.total)}% outcome coverage`}
+          detail={`${Math.round(stats.errorHits).toLocaleString()} errors · ${pct(stats.knownStatusHits, stats.total)}% known`}
           accent={errorRateAccent(errorRate)}
         />
 
@@ -150,12 +150,12 @@ export function OverviewView({
 
       <AttentionStrip current={stats} previous={previousStats} trendPercent={trendPercent} period={period} project={projectFilter} category={categoryFilter} />
 
-      <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-neutral-400">
-        <span>Latest received request: {formatRelativeTime(latestEvent, referenceTime)}</span>
-        <span>{projectFilter ? `Heartbeat: ${latestHeartbeat ? formatRelativeTime(latestHeartbeat, referenceTime) : "not configured"}` : "Heartbeat: select a project to inspect sender liveness"}</span>
+      <div className="delivery-context">
+        <span><i aria-hidden="true" className="receipt-dot" />{latestEvent ? `Last retained request ${formatRelativeTime(latestEvent, referenceTime)}` : "No retained request records"}</span>
+        <span>{projectFilter ? `Heartbeat ${latestHeartbeat ? formatRelativeTime(latestHeartbeat, referenceTime) : "not configured"}` : "Select a project to inspect heartbeat delivery"}</span>
       </div>
-      <p className="text-sm text-neutral-400">Volume uses sample weighting; sampled totals are estimates. AI requests do not measure people, sessions, citations or referrals. Unique pages represent observed paths.</p>
-      <Panel title="Request traffic" meta={periodDays === 1 && !isLongRange ? "Chronological hours · UTC" : "UTC days · partial edge days included"}>
+      <div className="overview-traffic-grid">
+      <Panel title="Request traffic" meta={periodDays === 1 && !isLongRange ? "Hourly · UTC" : "Daily · UTC"}>
         {periodDays === 1 && !isLongRange && rangeStart && rangeEnd
           ? <HourlyTrendChart data={chronologicalHours} from={rangeStart} to={rangeEnd} />
           : <DailyTrendDashboard dailyTrend={dailyTrend} categoryTrend={dailyCategoryTrend} periodDays={periodDays} referenceTime={rangeEnd ?? referenceTime} rangeStart={rangeStart} />}
@@ -164,6 +164,7 @@ export function OverviewView({
       <Panel title="Crawler mix" meta={topCategory ? `${categoryLabel(topCategory.bot_category)} leads` : `${Math.round(stats.total).toLocaleString()} requests`}>
         <CrawlerMixBars data={stats.categories} total={stats.total} categoryHref={rowCategoryHref} />
       </Panel>
+      </div>
 
       {showAiBreakdown && (
         <AiBotsBreakdown
@@ -181,22 +182,22 @@ export function OverviewView({
             <p className="text-sm text-neutral-500">No bot activity in this period.</p>
           ) : (
             <>
-              <div className="space-y-1.5">
+              <div className="ranked-list">
                 {(() => {
                   const maxHits = Math.max(...stats.topBotsWithConfidence.slice(0, 8).map((b) => b.total_hits), 1);
                   return stats.topBotsWithConfidence.slice(0, 8).map((b) => (
-                    <div key={`${b.bot_name}:${b.bot_category}`} className="grid grid-cols-[1.1fr_1fr_4.5rem] items-center gap-3 text-xs">
-                      <span className="flex min-w-0 items-center gap-1.5 truncate">
+                    <div key={`${b.bot_name}:${b.bot_category}`} className="ranked-row">
+                      <span className="ranked-identity">
                         <span className={`h-2 w-2 shrink-0 rounded-full ${normalizeBotCategoryDot(b.bot_name, b.bot_category)}`} />
                         <BotName name={b.bot_name} href={botHref({ bot: b.bot_name, project: projectFilter, category: categoryFilter, period })} className="truncate font-medium text-neutral-100 hover:text-white" />
                       </span>
                       <BarMeter value={(b.total_hits / maxHits) * 100} />
-                      <span className="text-right font-mono text-neutral-100">{Math.round(b.total_hits).toLocaleString()}<span className="block text-xs text-neutral-500">{pct(b.total_hits, stats.total)}%</span></span>
+                      <span className="ranked-value">{Math.round(b.total_hits).toLocaleString()}<small>{pct(b.total_hits, stats.total)}%</small></span>
                     </div>
                   ));
                 })()}
               </div>
-              <Link href={dashboardHref({ view: "bots", period, project: projectFilter, category: categoryFilter })} className="mt-3 inline-block text-xs text-neutral-500 hover:text-neutral-300">View all bots →</Link>
+              <Link href={dashboardHref({ view: "bots", period, project: projectFilter, category: categoryFilter })} className="evidence-link">View all bots →</Link>
             </>
           )}
         </Panel>
@@ -207,17 +208,16 @@ export function OverviewView({
               <p className="text-sm text-neutral-500">No page activity in this period.</p>
             ) : (
               <>
-                <div className="space-y-1.5">
+                <div className="ranked-list">
                   {stats.topPagesByProject.slice(0, 8).map((p) => (
-                    <div key={`${p.project}:${p.path}`} className="grid grid-cols-[3.5rem_1fr_4rem] items-center gap-3 text-xs">
-                      <span className="truncate rounded bg-neutral-900 px-1.5 py-0.5 text-xs text-neutral-500" title={p.project}>{p.project}</span>
-                      <Link href={eventHref({ project: p.project, path: p.path, category: categoryFilter, period })} className="truncate font-mono text-neutral-200 hover:text-white" title={p.path}>{p.path}</Link>
-                      <span className="text-right font-mono text-neutral-100">{p.count.toLocaleString()}</span>
+                    <div key={`${p.project}:${p.path}`} className="ranked-row ranked-page-row">
+                      <span className="ranked-page-identity"><Link href={eventHref({ project: p.project, path: p.path, category: categoryFilter, period })} className="text-neutral-200 hover:text-white">{p.path}</Link><small>{p.project}</small></span>
+                      <span className="ranked-value">{p.count.toLocaleString()}</span>
                     </div>
                   ))}
                 </div>
                 <details className="mt-3 group">
-                  <summary className="cursor-pointer select-none text-xs text-neutral-500 hover:text-neutral-300">More top pages (up to 50)</summary>
+                  <summary className="evidence-link cursor-pointer">More top pages (up to 50)</summary>
                   <div className="mt-2 space-y-1">
                     {stats.topPagesByProject.map((p) => (
                       <div key={`all:${p.project}:${p.path}`} className="grid gap-3 rounded border border-neutral-800/90 bg-neutral-950 px-3 py-2 md:grid-cols-[2fr_1fr] md:items-center">
@@ -240,8 +240,8 @@ export function OverviewView({
         )}
       </div>
 
-      <details className="rounded border border-neutral-800 p-4">
-        <summary className="cursor-pointer py-2 text-sm font-medium text-neutral-300">More analysis</summary>
+      <details className="analysis-disclosure">
+        <summary>More analysis</summary>
         <div className="mt-4 space-y-5">
       {!isLongRange && (
         <Panel title="Hour-of-day distribution" meta="Combined requests by UTC clock hour">
@@ -267,6 +267,7 @@ export function OverviewView({
       )}
         </div>
       </details>
+      <details className="measurement-note"><summary>How to read these numbers</summary><p>Volume uses sample weighting; sampled totals are estimates. The error rate divides reported 4xx/5xx responses by requests with a known outcome. UTC charts include partial days at the selection boundaries. AI requests do not measure people, sessions, citations or referrals. Pages represent observed paths.</p></details>
     </div>
   );
 }

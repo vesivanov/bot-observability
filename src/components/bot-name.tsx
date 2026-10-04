@@ -19,13 +19,20 @@ export function BotName({
   const legend = getBotLegend(name);
   const inner = children ?? name;
   const triggerRef = useRef<HTMLAnchorElement | HTMLSpanElement>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
   const [show, setShow] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
 
   const updatePos = useCallback(() => {
     if (!triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
-    setPos({ top: rect.bottom + 4, left: rect.left });
+    const width = Math.min(320, window.innerWidth - 32);
+    const height = tooltipRef.current?.getBoundingClientRect().height ?? 220;
+    const below = rect.bottom + 8;
+    setPos({
+      top: below + height <= window.innerHeight - 16 ? below : Math.max(16, rect.top - height - 8),
+      left: Math.max(16, Math.min(rect.left, window.innerWidth - width - 16)),
+    });
   }, []);
 
   const openTooltip = useCallback(() => {
@@ -51,6 +58,7 @@ export function BotName({
   // the only way touch users can close it, since there's no hover-out.
   useEffect(() => {
     if (!show) return;
+    updatePos();
     function handleOutside(event: MouseEvent | TouchEvent) {
       if (triggerRef.current && !triggerRef.current.contains(event.target as Node)) {
         setShow(false);
@@ -58,11 +66,15 @@ export function BotName({
     }
     document.addEventListener("mousedown", handleOutside);
     document.addEventListener("touchstart", handleOutside);
+    window.addEventListener("resize", updatePos);
+    window.addEventListener("scroll", closeTooltip, true);
     return () => {
       document.removeEventListener("mousedown", handleOutside);
       document.removeEventListener("touchstart", handleOutside);
+      window.removeEventListener("resize", updatePos);
+      window.removeEventListener("scroll", closeTooltip, true);
     };
-  }, [show]);
+  }, [show, updatePos, closeTooltip]);
 
   if (!legend) {
     return href ? (
@@ -142,17 +154,18 @@ export function BotName({
       {trigger}
       {show && typeof document !== "undefined" && createPortal(
         <div
-          className="pointer-events-none fixed z-[9999] w-72 rounded-lg border border-neutral-700/80 bg-neutral-900 p-3 shadow-xl"
+          ref={tooltipRef}
+          className="pointer-events-none fixed z-[9999] w-80 max-w-[calc(100vw-32px)] rounded-xl border border-neutral-700/80 bg-neutral-900 p-4 shadow-xl"
           style={{ top: pos.top, left: pos.left }}
         >
           <div className="mb-1.5 flex items-center gap-2">
             <span className="text-sm font-semibold text-white">{name}</span>
-            <span className={`text-[10px] font-semibold uppercase tracking-wider ${legend.groupColor}`}>{legend.groupLabel}</span>
+            <span className={`text-xs font-medium ${legend.groupColor}`}>{legend.groupLabel}</span>
           </div>
-          <p className="mb-1 text-[11px] text-neutral-400">{legend.groupDescription} &middot; {legend.subLabel}</p>
-          <p className="text-[11px] leading-relaxed text-neutral-300">{legend.what}</p>
+          <p className="mb-2 text-xs leading-relaxed text-neutral-400">{legend.groupDescription} &middot; {legend.subLabel}</p>
+          <p className="text-[13px] leading-relaxed text-neutral-300">{legend.what}</p>
           <div className="mt-2 border-t border-neutral-800 pt-1.5">
-            <p className="text-[10px] leading-relaxed text-neutral-500">{legend.impact}</p>
+            <p className="text-xs leading-relaxed text-neutral-400">{legend.impact}</p>
           </div>
         </div>,
         document.body,

@@ -32,7 +32,7 @@ export function BotsTable({ bots, period, projectFilter, categoryFilter, aggrega
     },
     {
       key: "hits",
-      label: "Hits",
+      label: "Requests",
       align: "right",
       sortable: true,
       sortAccessor: (b) => b.total_hits,
@@ -53,7 +53,7 @@ export function BotsTable({ bots, period, projectFilter, categoryFilter, aggrega
     },
     {
       key: "verified",
-      label: "Verified %",
+      label: "DNS verified",
       align: "right",
       sortable: true,
       sortAccessor: (b) => (b.total_hits > 0 ? b.verified_hits / b.total_hits : 0),

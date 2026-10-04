@@ -132,7 +132,7 @@ async function BotDetailPanel({
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="metrics-grid">
         <StatTile label="Total hits" value={report.total_hits.toLocaleString()} />
         <StatTile label="Verified share" value={`${pct(report.verified_hits, report.total_hits)}%`} detail={`${report.ua_only_hits.toLocaleString()} UA-only hits`} accent={verifiedAccent(pct(report.verified_hits, report.total_hits))} />
         <StatTile label="Projects hit" value={report.projects_hit.toLocaleString()} />
@@ -151,7 +151,7 @@ async function BotDetailPanel({
               <Link key={`${p.project}:${p.path}`} href={eventHref({ project: p.project, bot: botName, path: p.path, category: categoryFilter, period })} className="block rounded border border-neutral-800/90 bg-neutral-950 px-3 py-2 hover:bg-neutral-900/70">
                 <div className="flex items-center justify-between gap-4">
                   <span className="min-w-0">
-                    <span className="block truncate font-mono text-sm text-neutral-100">{p.path}</span>
+                    <span className="block break-all font-mono text-sm leading-relaxed text-neutral-100">{p.path}</span>
                     <span className="mt-1 block text-xs text-neutral-500">{p.project}</span>
                   </span>
                   <span className="font-mono text-sm font-semibold text-neutral-100">{p.count.toLocaleString()}</span>
@@ -173,13 +173,13 @@ async function BotDetailPanel({
                       <ConfidenceChip confidence={r.confidence} />
                     </span>
                   </div>
-                  <p className="mt-2 truncate font-mono text-xs text-neutral-200">{r.path}</p>
+                  <p className="mt-2 break-all font-mono text-xs leading-relaxed text-neutral-200">{r.path}</p>
                   <p className="mt-1 text-xs text-neutral-500">{r.project_name}</p>
                 </div>
               ))}
             </div>
           </Panel>
-          <Link href={eventHref({ bot: botName, project: projectFilter, category: categoryFilter, period })} className="mt-3 inline-block text-xs text-neutral-500 hover:text-neutral-300">Open all raw events</Link>
+          <Link href={eventHref({ bot: botName, project: projectFilter, category: categoryFilter, period })} className="evidence-link">Open all raw events</Link>
         </section>
       </div>
     </div>

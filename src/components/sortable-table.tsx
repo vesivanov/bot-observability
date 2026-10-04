@@ -1,6 +1,7 @@
 "use client";
 
 import { type ReactNode, useMemo, useState } from "react";
+import { FilterSelect } from "./filter-select";
 
 export interface SortableColumn<Row> {
   key: string;
@@ -52,17 +53,21 @@ export function SortableTable<Row>({
   }
 
   return (
-    <div className="overflow-x-auto rounded border border-neutral-800/90">
-      <table className="w-full text-sm">
+    <div className="data-table-container responsive-data-table">
+      <div className="mobile-table-sort">
+        <FilterSelect label="Sort by" value={sortKey} options={columns.filter((column) => column.sortable).map((column) => ({ value: column.key, label: column.label }))} onChange={setSortKey} />
+        <button type="button" className="filter-control" onClick={() => setSortDir((direction) => direction === "desc" ? "asc" : "desc")} aria-label={`Sort ${sortDir === "desc" ? "ascending" : "descending"}`}>{sortDir === "desc" ? "Descending ↓" : "Ascending ↑"}</button>
+      </div>
+      <table className="data-table w-full text-sm">
         <thead className="text-xs text-neutral-500">
           <tr className="border-b border-neutral-800">
             {columns.map((column) => (
-              <th key={column.key} className={`px-3 py-2 font-medium ${column.align === "right" ? "text-right" : "text-left"}`}>
+              <th key={column.key} aria-sort={sortKey === column.key ? sortDir === "desc" ? "descending" : "ascending" : undefined} className={`font-medium ${column.align === "right" ? "text-right" : "text-left"}`}>
                 {column.sortable ? (
                   <button
                     type="button"
                     onClick={() => toggleSort(column)}
-                    className={`inline-flex items-center gap-1 hover:text-neutral-300 ${column.align === "right" ? "flex-row-reverse" : ""}`}
+                    className={`inline-flex min-h-11 items-center gap-2 hover:text-neutral-100 ${column.align === "right" ? "flex-row-reverse" : ""}`}
                   >
                     {column.label}
                     {sortKey === column.key && (
@@ -80,7 +85,7 @@ export function SortableTable<Row>({
           {sortedRows.map((row) => (
             <tr key={rowKey(row)} className="border-t border-neutral-800 hover:bg-neutral-900">
               {columns.map((column) => (
-                <td key={column.key} className={`px-3 py-2 ${column.align === "right" ? "text-right" : ""}`}>
+                <td key={column.key} data-label={column.label} className={column.align === "right" ? "text-right" : ""}>
                   {column.render(row)}
                 </td>
               ))}

@@ -1,4 +1,5 @@
 import { QueryForm } from "@/components/query-form";
+import { FilterSelect } from "@/components/filter-select";
 import type { DashboardRange } from "@/lib/period";
 import Link from "next/link";
 import { getDb } from "@/app/dashboard/db";
@@ -77,7 +78,6 @@ export async function EventsViewServer({
     getMeta(db, undefined),
   ]);
   if (!cached) statsCache.set(cacheKey, rows, STATS_CACHE_TTL_MS);
-  const allProjects = Array.from(new Set([projectFilter, ...meta.allProjects])).filter(Boolean);
 
   const hasMore = rows.length > limit;
   const displayRows = hasMore ? rows.slice(0, limit) : rows;
@@ -91,9 +91,10 @@ export async function EventsViewServer({
   return (
     <div className="space-y-4">
       {isEmptyDb && <EmptyTrafficState project={projectFilter || undefined} />}
-      <QueryForm key={cacheKey} context={context} className="grid gap-2 rounded border border-neutral-800/90 bg-neutral-950 p-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_auto_auto_auto_auto]">
+      <QueryForm key={cacheKey} context={context} className="event-filters">
         <input type="hidden" name="view" value="events" />
         <input type="hidden" name="period" value={period} />
+        <input type="hidden" name="project" value={projectFilter} />
         {categoryFilter && <input type="hidden" name="category" value={categoryFilter} />}
         <label className="grid gap-1">
           <span className="px-1 text-xs font-semibold uppercase tracking-[0.16em] text-neutral-400">Bot name</span>
@@ -101,7 +102,7 @@ export async function EventsViewServer({
             name="bot"
             defaultValue={botFilter}
             placeholder="ClaudeBot"
-            className="min-h-8 rounded border border-neutral-800 bg-neutral-950 px-2 text-xs text-neutral-100 outline-none placeholder:text-neutral-700 focus:border-amber-600/70"
+            className="filter-control"
           />
         </label>
         <label className="grid gap-1">
@@ -110,29 +111,13 @@ export async function EventsViewServer({
             name="path"
             defaultValue={pathFilter}
             placeholder="/pricing"
-            className="min-h-8 rounded border border-neutral-800 bg-neutral-950 px-2 font-mono text-xs text-neutral-100 outline-none placeholder:text-neutral-700 focus:border-amber-600/70"
+            className="filter-control font-mono"
           />
         </label>
-        <label className="grid gap-1">
-          <span className="px-1 text-xs font-semibold uppercase tracking-[0.16em] text-neutral-400">Project</span>
-          <select name="project" defaultValue={projectFilter} className="min-h-8 rounded border border-neutral-800 bg-neutral-950 px-2 text-xs text-neutral-100 outline-none focus:border-amber-600/70">
-            <option value="">All projects</option>
-            {allProjects.map((p) => <option key={p} value={p}>{p}</option>)}
-          </select>
-        </label>
-        <label className="grid gap-1">
-          <span className="px-1 text-xs font-semibold uppercase tracking-[0.16em] text-neutral-400">Limit</span>
-          <select name="limit" defaultValue={limit.toString()} className="min-h-8 rounded border border-neutral-800 bg-neutral-950 px-2 text-xs text-neutral-100 outline-none focus:border-amber-600/70">
-            <option value="25">25</option>
-            <option value="50">50</option>
-            <option value="100">100</option>
-            <option value="250">250</option>
-            <option value="500">500</option>
-          </select>
-        </label>
-        <button type="submit" className="min-h-8 self-end rounded border border-amber-700/45 bg-amber-950/20 px-3 text-xs font-medium text-amber-100 hover:bg-amber-900/30">Filter</button>
+        <FilterSelect name="limit" label="Rows per page" defaultValue={limit.toString()} options={[25,50,100,250,500].map((value) => ({ value: String(value), label: String(value) }))} />
+        <button type="submit" className="apply-button self-end">Filter requests</button>
         {showClear && (
-          <Link href={`/dashboard?view=events&period=${encodeURIComponent(period)}`} className="inline-flex min-h-8 items-center self-end text-xs text-neutral-500 hover:text-neutral-200">Clear</Link>
+          <Link href={`/dashboard?view=events&period=${encodeURIComponent(period)}`} className="quiet-button inline-flex items-center self-end">Clear filters</Link>
         )}
       </QueryForm>
 
@@ -145,16 +130,26 @@ export async function EventsViewServer({
         <span>Showing {displayRows.length ? offset + 1 : 0}–{offset + displayRows.length}{hasMore ? "+" : ""}</span>
         <div className="flex items-center gap-2">
           {offset > 0 && (
-            <Link href={pageHref(Math.max(0, offset - limit))} className="rounded border border-neutral-800 px-2 py-1 hover:bg-neutral-800 hover:text-neutral-200">← Prev</Link>
+            <Link href={pageHref(Math.max(0, offset - limit))} className="pagination-link">← Previous</Link>
           )}
           {hasMore && (
-            <Link href={pageHref(offset + limit)} className="rounded border border-neutral-800 px-2 py-1 hover:bg-neutral-800 hover:text-neutral-200">Next →</Link>
+            <Link href={pageHref(offset + limit)} className="pagination-link">Next →</Link>
           )}
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded border border-neutral-800/90">
-        <table className="w-full text-xs">
+      <div className="mobile-request-list" aria-label="Request evidence">
+        {displayRows.map((r) => <article key={r.id} className="request-card">
+          <div className="request-card-heading"><BotName name={r.bot_name} href={botHref({ bot: r.bot_name, project: r.project_name, category: categoryFilter, period })} /><StatusCodeChip statusCode={r.status_code} /></div>
+          <Link className="request-card-path" href={eventHref({ project: r.project_name, path: r.path, bot: botFilter, category: categoryFilter, period })}>{r.path}</Link>
+          <div className="request-card-meta"><span>{r.project_name}</span><time dateTime={r.created_at}>{formatDateTime(r.created_at)}</time></div>
+          <details><summary>Request details</summary><div><NormalizedCategoryChip botName={r.bot_name} category={r.bot_category} /><ConfidenceChip confidence={r.confidence} /><span className="self-center">{r.method}</span></div></details>
+        </article>)}
+        {displayRows.length === 0 && <p className="py-8 text-center text-sm text-neutral-500">No events found for the given filters.</p>}
+      </div>
+
+      <div className="data-table-container desktop-request-table">
+        <table className="data-table w-full text-xs">
           <thead className="text-neutral-500">
             <tr className="border-b border-neutral-800">
               <th className="px-3 py-2 text-left font-medium">Time</th>
