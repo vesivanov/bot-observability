@@ -24,6 +24,7 @@ export function statusClassOf(statusCode: number): string {
 
 export interface BotHit {
   id?: string;
+  event_id?: string;
   created_at?: Date;
   project_name: string;
   environment: string;
@@ -51,6 +52,7 @@ export interface BotHit {
 
 export interface BotHitRow {
   id: string;
+  event_id?: string | null;
   created_at: string;
   project_name: string;
   environment: string;

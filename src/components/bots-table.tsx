@@ -115,14 +115,14 @@ export function BotsTable({
       0,
       {
         key: "pages",
-        label: "Pages",
+        label: "Requested paths",
         align: "right",
         sortable: true,
         sortAccessor: (b) => metrics.get(b.bot_name)?.unique_pages ?? 0,
         render: (b) => (
           <Link
             className="inline-evidence-link font-mono"
-            href={dashboardHref({ ...scope, view: "pages", bot: b.bot_name })}
+            href={dashboardHref({ ...scope, view: "pages", bot: b.bot_name, status: scope.status ?? "all" })}
           >
             {metrics.get(b.bot_name)?.unique_pages.toLocaleString() ?? "—"}
           </Link>
@@ -159,7 +159,7 @@ export function BotsTable({
                 ...scope,
                 view: "pages",
                 bot: b.bot_name,
-                status: statusFilter ?? option.status,
+                status: statusFilter && statusFilter !== "all" ? statusFilter : option.status,
               })}
             >
               {count.toLocaleString()}{" "}

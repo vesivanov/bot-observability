@@ -36,6 +36,7 @@ export function proxy(request: NextRequest, event: NextFetchEvent) {
     const rate = [1, 0.5, 0.25, 0.1].includes(configuredRate) ? configuredRate : 1;
     if (probe || Math.random() < rate) {
       const payload = probe ? { probe: "connection" } : {
+        event_id: crypto.randomUUID(), // Reuse this ID if adding delivery retries.
         url: request.nextUrl.origin + request.nextUrl.pathname,
         method: request.method,
         user_agent: ua,

@@ -65,6 +65,14 @@ describe("response investigation navigation", () => {
     expect(readDashboardQuery({status:"301"}).status).toBe("301");
     expect(readDashboardQuery({status:"unknown"}).status).toBe("unknown");
   });
+  it("defaults Pages to successful GETs while preserving an explicit all-responses selection", () => {
+    expect(readDashboardQuery({ view: "pages" }).status).toBe("successful");
+    expect(readDashboardQuery({ view: "events" }).status).toBeUndefined();
+    for (const status of ["all", "successful", "3xx"]) {
+      const href = dashboardHref({ view: "pages", period: "7", status }, { view: "events" });
+      expect(readDashboardQuery(Object.fromEntries(new URL(href, "https://example.test").searchParams)).status).toBe(status);
+    }
+  });
 });
 
 

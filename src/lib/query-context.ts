@@ -27,7 +27,7 @@ export function readDashboardQuery(
     bot: value("bot") || undefined,
     path: value("path") || undefined,
     prefix: value("prefix") || undefined,
-    status: parseRequestStatus(value("status")),
+    status: parseRequestStatus(value("status")) ?? (value("view") === "pages" ? "successful" : undefined),
     limit: getRawEventLimit(params.limit),
     offset: Math.max(0, Number.parseInt(value("offset") ?? "", 10) || 0),
   };

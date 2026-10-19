@@ -95,7 +95,7 @@ export function OverviewView({
         <StatTile
           href={eventHref({period,project:projectFilter,category:categoryFilter})}
           label="Request volume"
-          detail={`${trendLabel} vs previous equal period · estimated if sampled`}
+          detail={`${trendLabel} vs previous equal period · includes redirect hops · estimated if sampled`}
           value={stats.total.toLocaleString()}
         />
         <StatTile
@@ -155,7 +155,7 @@ export function OverviewView({
         </Panel>
 
         {!isLongRange && stats.topPagesByProject && (
-          <Panel title="Top pages" meta={`Top ${Math.min(8, stats.topPagesByProject.length)} observed paths`}>
+          <Panel title="Top successfully fetched paths" meta={`Top ${Math.min(8, stats.topPagesByProject.length)} · non-API GETs with reported 2xx`}>
             {stats.topPagesByProject.length === 0 ? (
               <p className="text-sm text-neutral-500">No page activity in this period.</p>
             ) : (
@@ -163,7 +163,7 @@ export function OverviewView({
                 <div className="ranked-list">
                   {stats.topPagesByProject.slice(0, 8).map((p) => (
                     <div key={`${p.project}:${p.path}`} className="ranked-row ranked-page-row">
-                      <span className="ranked-page-identity"><Link href={dashboardHref({ view: "pages", project: p.project, path: p.path, category: categoryFilter, period })} className="text-neutral-200 hover:text-white">{p.path}</Link><small>{p.project}</small></span>
+                      <span className="ranked-page-identity"><Link href={dashboardHref({ view: "pages", project: p.project, path: p.path, category: categoryFilter, period, status: "successful" })} className="text-neutral-200 hover:text-white">{p.path}</Link><small>{p.project}</small></span>
                       <span className="ranked-value">{p.count.toLocaleString()}</span>
                     </div>
                   ))}
@@ -175,7 +175,7 @@ export function OverviewView({
         )}
       </div>
 
-      <details className="measurement-note"><summary>How to read these numbers</summary><p>Volume uses sample weighting; sampled totals are estimates. The error rate divides reported 4xx/5xx responses by requests with a known outcome. UTC charts include partial days at the selection boundaries. AI requests do not measure people, sessions, citations or referrals. Pages represent observed paths.</p></details>
+      <details className="measurement-note"><summary>How to read these numbers</summary><p>Volume counts all HTTP requests, including redirects and repeat fetches. A redirect followed by its destination is two requests. Top successfully fetched paths includes only reported 2xx non-API GET requests, excluding redirect hops and HEAD probes. These paths are not unique canonical content or sessions. Volume uses sample weighting; sampled totals are estimates. The error rate divides reported 4xx/5xx responses by requests with a known outcome. Historical proxy-reported 200s may not represent final responses. UTC charts include partial days at the selection boundaries. AI requests do not measure people, sessions, citations or referrals.</p></details>
     </div>
   );
 }

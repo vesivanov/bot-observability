@@ -162,7 +162,7 @@ export async function BotsViewServer({
       from.getTime() - (to.getTime() - from.getTime()),
     );
     const extras =
-      !botFilter && !aggregate && !statusFilter && !pathFilter && !prefixFilter
+      !botFilter && !aggregate && (!statusFilter || statusFilter === "all") && !pathFilter && !prefixFilter
         ? await Promise.all([
             db.botPeriodCounts({
               from,
@@ -192,7 +192,7 @@ export async function BotsViewServer({
   statsCache.set(key, data, STATS_CACHE_TTL_MS);
   const { bots, analysis, report, activity, extras } = data;
 
-  if (aggregate && (statusFilter || pathFilter || prefixFilter))
+  if (aggregate && ((statusFilter && statusFilter !== "all") || pathFilter || prefixFilter))
     return (
       <div className="evidence-caption">
         Path and exact outcome filters require retained request detail.{" "}
@@ -276,7 +276,7 @@ export async function BotsViewServer({
         {!aggregate && <InvestigationFilters context={context} codes={analysis?.statusCodes} showBot={false} />}
         <div className="investigation-summary">
           <span><strong>{(analysis?.summary.total_hits ?? report.total_hits).toLocaleString()}</strong> requests</span>
-          <Link className="inline-evidence-link" href={dashboardHref(context, { view: "pages" })}><strong>{analysis?.pageCount.toLocaleString() ?? "—"}</strong> observed pages →</Link>
+          <Link className="inline-evidence-link" href={dashboardHref(context, { view: "pages", status: context.status ?? "all" })}><strong>{analysis?.pageCount.toLocaleString() ?? "—"}</strong> requested paths →</Link>
           {analysis && <span><strong>{analysis.summary.error_hits.toLocaleString()}</strong> errors</span>}
           {!projectFilter && <span><strong>{analysis?.projects.length ?? report.projects_hit}</strong> projects</span>}
         </div>
@@ -328,7 +328,7 @@ export async function BotsViewServer({
       <div className="investigation-summary">
         <span><strong>{bots.length}</strong> bot identities</span>
         <span><strong>{total.toLocaleString()}</strong> requests</span>
-        <Link className="inline-evidence-link" href={dashboardHref(context, { view: "pages" })}>{analysis?.pageCount.toLocaleString() ?? "—"} observed pages →</Link>
+        <Link className="inline-evidence-link" href={dashboardHref(context, { view: "pages", status: context.status ?? "all" })}>{analysis?.pageCount.toLocaleString() ?? "—"} requested paths →</Link>
       </div>
       <Panel
         title="Bot analysis"

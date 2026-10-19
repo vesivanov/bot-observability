@@ -32,7 +32,7 @@ export async function PagesViewServer({ context, range }: { context: DashboardQu
     <InvestigationFilters context={context} codes={data.statusCodes} bots={data.botNames} />
     <div className="investigation-summary" aria-label="Selected request totals">
       <span><strong>{summary.total_hits.toLocaleString()}</strong> requests</span>
-      <span><strong>{data.pageCount.toLocaleString()}</strong> observed {data.pageCount === 1 ? "page" : "pages"}</span>
+      <span><strong>{data.pageCount.toLocaleString()}</strong> {context.status === "successful" ? "successfully fetched" : "requested"} {data.pageCount === 1 ? "path" : "paths"}</span>
       <span><strong>{data.bots.length}</strong> bot identities</span>
       <span><strong>{summary.redirect_hits.toLocaleString()}</strong> redirects</span>
       <span><strong>{summary.error_hits.toLocaleString()}</strong> errors</span>
@@ -57,6 +57,6 @@ export async function PagesViewServer({ context, range }: { context: DashboardQu
       </Panel>
     </> : <RequestEvidence analysis={data} context={context} showStatuses={false} />}
     {!context.path && <details className="analysis-disclosure"><summary>Response activity over time</summary><Panel title="Request activity" meta="Selected responses · UTC · boundary days may be partial"><DailyTrendChart data={fillDatePeriods(range.start, range.end).map(date => ({ date, count: daily.get(date) ?? 0 }))} /></Panel></details>}
-    <details className="measurement-note"><summary>About page and response data</summary><p>Counts use sample weighting. Pages are distinct project + path combinations observed in retained requests, not a complete site inventory. Different hosts within a project are combined; host details are available in the request log. Redirects are responses, not necessarily failures. Redirect destinations are not collected. Missing status means the sender did not capture the outcome.</p></details>
+    <details className="measurement-note"><summary>About page and response data</summary><p>Request volume counts each HTTP request, including redirect hops and repeat fetches. Successful GETs includes only reported 2xx non-API GET requests; a root redirect followed by /en contributes one successfully fetched path. All responses also includes redirect, error and unknown paths. Paths are distinct project + path combinations, not canonical content, sessions or a complete site inventory. Different hosts within a project are combined. Counts use sample weighting; sampled totals are estimates. Redirect destinations are not collected. Missing status means the sender did not capture the outcome. Historical proxy-reported 200s may not represent final responses.</p></details>
   </div>;
 }
