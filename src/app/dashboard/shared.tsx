@@ -292,7 +292,7 @@ export function ActiveFilterChips({ hideProject = false, ...context }: Dashboard
   const chips: { label: string; href: string }[] = [];
   for (const key of ["project", "bot", "path", "prefix", "status"] as const) {
     if (hideProject && key === "project") continue;
-    if (context[key]) chips.push({ label: `${key}: ${key === "status" ? requestStatusLabel(context[key]) : context[key]}`, href: dashboardHref(context, { [key]: undefined }) });
+    if (context[key] && !(key === "status" && context[key] === "all")) chips.push({ label: `${key}: ${key === "status" ? requestStatusLabel(context[key]) : context[key]}`, href: dashboardHref(context, { [key]: key === "status" && context.view === "pages" ? "all" : undefined }) });
   }
   if (chips.length === 0) return null;
   return (

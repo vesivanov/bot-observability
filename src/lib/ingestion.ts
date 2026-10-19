@@ -166,6 +166,13 @@ export async function ingestRequest(request: Request) {
     return NextResponse.json({ stored: true, heartbeat: true, project: projectName });
   }
 
+  // Reject malformed IDs instead of truncating them into collisions. IDs are
+  // scoped to the authenticated project by the database uniqueness constraint.
+  const eventId = payload.event_id;
+  if (eventId !== undefined && (typeof eventId !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/.test(eventId))) {
+    return jsonError("Invalid event_id", 400);
+  }
+
   const botName = heartbeat ? "Heartbeat" : match?.name ?? "Unknown";
   const botCategory = heartbeat ? "generic" : match?.category ?? "unknown";
   const hashedIp = storedIp(ip, ipHashSecret);
@@ -174,6 +181,7 @@ export async function ingestRequest(request: Request) {
   const parsedUrl = parseUrl(url);
 
   const hit: BotHit = {
+    event_id: eventId as string | undefined,
     project_name: projectName,
     environment: text(payload.environment, "production", 100),
     host: text(payload.host, parsedUrl?.host ?? request.headers.get("host") ?? "", 300),
@@ -200,7 +208,10 @@ export async function ingestRequest(request: Request) {
 
   const client = getRequestDb(databaseUrl);
   try {
-    await client.insertHit(hit);
+    const inserted = await client.insertHit(hit);
+    if (!inserted) {
+      return NextResponse.json({ stored: false, reason: "duplicate" });
+    }
   } catch (error) {
     console.error("[bot-hit] failed to store hit", error);
     return jsonError("storage_failed", 500);

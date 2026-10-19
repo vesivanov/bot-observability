@@ -47,7 +47,7 @@ describe("POST /api/bot-hit", () => {
     };
     vi.useFakeTimers();
     vi.setSystemTime(new Date(Date.UTC(2026, 9, 2, 12) + ++clockTick * 120_000));
-    mocks.insertHit.mockReset();
+    mocks.insertHit.mockReset().mockResolvedValue(true);
     mocks.recordConnectionReceipt.mockReset();
     mocks.upsertProjectHeartbeat.mockReset();
     mocks.close.mockReset();
@@ -140,6 +140,25 @@ describe("POST /api/bot-hit", () => {
     expect(mocks.insertHit.mock.calls[0][0]).toMatchObject({ bot_name: "GPTBot", bot_category: "ai_training" });
     const browser = await POST(makeRequest({ user_agent: "Mozilla/5.0", bot_name: "GPTBot", bot_category: "ai_training" }, { authorization: `Bearer ${ingestToken}` }));
     expect(await browser.json()).toMatchObject({ stored: false, reason: "not_bot" });
+  });
+
+  it("passes event IDs to storage and acknowledges duplicate deliveries without another count", async () => {
+    const event_id = "f50db4d0-b276-4da5-9f41-a2cc80703b26";
+    const body = { user_agent: "GPTBot/1.0", event_id };
+    const headers = { authorization: `Bearer ${ingestToken}` };
+    expect((await POST(makeRequest(body, headers))).status).toBe(201);
+    expect(mocks.insertHit.mock.calls[0][0]).toMatchObject({ event_id, project_name: "tracked-site" });
+    mocks.insertHit.mockResolvedValueOnce(false);
+    const retry = await POST(makeRequest(body, headers));
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toEqual({ stored: false, reason: "duplicate" });
+  });
+
+  it("rejects invalid event IDs instead of silently dropping or truncating them", async () => {
+    for (const event_id of [null, 123, "", "x".repeat(129), "id\nwith-control", " id "]) {
+      expect((await POST(makeRequest({ user_agent: "GPTBot/1.0", event_id }, { authorization: `Bearer ${ingestToken}` }))).status).toBe(400);
+    }
+    expect(mocks.insertHit).not.toHaveBeenCalled();
   });
 
   it("ignores an invalid submitted bot category", async () => {

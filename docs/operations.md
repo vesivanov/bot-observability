@@ -42,6 +42,17 @@ Inspect `docker compose logs migrate app`, sign in, and send an external website
 
 A direct Node deployment uses the same order: stop every collector instance, take a backup, update code, `npm ci`, `npm run migrate`, `npm run build`, and restart. Do not run an older pre-rollup writer while migrating/reconciling. Routine upgrades do not require a rebuild of all rollups.
 
+Migration 007 adds a nullable event ID and a unique project + event ID index.
+Apply it before deploying the new collector writer. Older senders remain
+compatible; update them to generate a fresh ID for each website request and
+reuse that ID for delivery retries. Duplicate IDs are acknowledged without
+incrementing raw events, weighted daily counts or first/last seen. Deduplication
+lasts while the original raw event is retained, so replaying a pruned event can
+count again. Existing records without IDs cannot be deduplicated safely by
+IP, path or deployment ID. Historical synthetic proxy 200s also cannot be
+reconstructed; response-stage logging is needed to capture actual origin
+outcomes. A request-stage continuation must send unknown status (0).
+
 ## Retain raw request detail
 
 Retention is optional and never runs automatically in Compose. Configure your own scheduling only if desired. The script removes raw rows before a **UTC midnight boundary**, in batches. It leaves daily counts, global first-seen metadata, health and receipts intact.

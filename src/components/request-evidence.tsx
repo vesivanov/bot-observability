@@ -22,9 +22,9 @@ export function StatusLinks({
   return (
     <div className="status-links" aria-label="Inspect response status">
       <Link
-        href={dashboardHref(context, { status: undefined })}
+        href={dashboardHref(context, { status: "all" })}
         className="status-link"
-        aria-current={!context.status ? "true" : undefined}
+        aria-current={!context.status || context.status === "all" ? "true" : undefined}
       >
         <span>All outcomes</span>
         <strong>{total.toLocaleString()}</strong>
@@ -73,16 +73,13 @@ export function RequestEvidence({
       )}
       <Panel
         title={
-          context.status
-            ? `Pages · ${requestStatusLabel(context.status)}`
-            : "Requested pages"
+          context.status === "successful" ? "Successfully fetched paths" : "Requested paths"
         }
-        meta={`${analysis.pageCount.toLocaleString()} observed paths · ${analysis.summary.total_hits.toLocaleString()} requests`}
+        meta={`${analysis.pageCount.toLocaleString()} observed ${analysis.pageCount === 1 ? "path" : "paths"} · ${analysis.summary.total_hits.toLocaleString()} ${analysis.summary.total_hits === 1 ? "request" : "requests"}`}
       >
-        {context.status && (
+        {context.status && context.status !== "all" && (
           <p className="evidence-caption">
-            Only requests with outcome {requestStatusLabel(context.status)} are
-            included below.{" "}
+            {context.status === "successful" ? "Only non-API GET requests with a reported 2xx response are included. Redirect hops and HEAD requests are excluded." : `Only requests with outcome ${requestStatusLabel(context.status)} are included below.`}{" "}
             <Link
               href={eventHref({
                 ...context,
@@ -115,6 +112,7 @@ export function RequestEvidence({
                         view: "pages",
                         project: row.project,
                         path: row.path,
+                        status: context.status ?? "all",
                         offset: 0,
                       })}
                       className="inline-evidence-link"
@@ -146,7 +144,7 @@ export function RequestEvidence({
                           view: "pages",
                           project: row.project,
                           path: row.path,
-                          status: context.status ?? "3xx",
+                          status: context.status && context.status !== "all" ? context.status : "3xx",
                           offset: undefined,
                         })}
                       >
@@ -165,7 +163,7 @@ export function RequestEvidence({
                           view: "pages",
                           project: row.project,
                           path: row.path,
-                          status: context.status ?? "errors",
+                          status: context.status && context.status !== "all" ? context.status : "errors",
                           offset: undefined,
                         })}
                       >
@@ -193,7 +191,7 @@ export function RequestEvidence({
         )}
         <div className="evidence-pagination">
           <span>
-            Pages {rows.length ? offset + 1 : 0}–{offset + rows.length} of{" "}
+            Paths {rows.length ? offset + 1 : 0}–{offset + rows.length} of{" "}
             {analysis.pageCount.toLocaleString()}
           </span>
           <div>

@@ -40,10 +40,14 @@ import { PATTERNS } from "./bots";
 // exactly with the integer daily rollup. NULLIF also keeps old malformed rows
 // from dividing by zero.
 const HIT_WEIGHT_SQL = "1.0/NULLIF(sample_rate::text::numeric,0)";
+// Successful non-API GETs identify fetched paths. Redirects, HEAD probes and
+// unknown outcomes remain in request volume, but cannot establish coverage.
+const SUCCESSFUL_GET_SQL = "status_code >= 200 AND status_code < 300 AND method = 'GET' AND is_api_route = FALSE AND path != '/api' AND path NOT LIKE '/api/%'";
 
 function requestStatusSql(status: string | undefined, values: (string | number)[]): string {
   const valid = parseRequestStatus(status);
-  if (!valid) return "";
+  if (!valid || valid === "all") return "";
+  if (valid === "successful") return `AND (${SUCCESSFUL_GET_SQL})`;
   if (valid === "unknown") return "AND (status_code < 200 OR status_code >= 600)";
   if (valid === "errors") return "AND status_code >= 400 AND status_code < 600";
   if (valid.endsWith("xx")) {
@@ -139,14 +143,14 @@ export function createDbClient(databaseUrl: string) {
     },
   });
 
-  async function insertHit(hit: BotHit): Promise<void> {
+  async function insertHit(hit: BotHit): Promise<boolean> {
     if (hit.heartbeat) {
       await upsertProjectHeartbeat({
         project_name: hit.project_name,
         environment: hit.environment,
         deployment_url: hit.deployment_url,
       });
-      return;
+      return true;
     }
 
     // Generate created_at once in JS so the raw row and the rollup `day`
@@ -163,19 +167,20 @@ export function createDbClient(databaseUrl: string) {
     // Keep the raw event, daily rollup, and first/last-seen update atomic while
     // using a single database round trip. The former implementation opened a
     // transaction and awaited three separate statements for every bot hit.
-    await sql`
+    const result = await sql`
       WITH inserted_hit AS (
         INSERT INTO bot_hits (
-          created_at, project_name, environment, host, path, query_string,
+          event_id, created_at, project_name, environment, host, path, query_string,
           method, status_code, bot_name, bot_category, confidence, user_agent,
           referer, ip, country, region, city, timezone,
           deployment_url, vercel_id, is_api_route, sample_rate, heartbeat
         ) VALUES (
-          ${createdAt}, ${hit.project_name}, ${hit.environment}, ${hit.host}, ${hit.path}, ${hit.query_string},
+          ${hit.event_id ?? null}, ${createdAt}, ${hit.project_name}, ${hit.environment}, ${hit.host}, ${hit.path}, ${hit.query_string},
           ${hit.method}, ${hit.status_code}, ${hit.bot_name}, ${hit.bot_category}, ${hit.confidence}, ${hit.user_agent},
           ${hit.referer}, ${hit.ip}, ${hit.country}, ${hit.region}, ${hit.city}, ${hit.timezone},
           ${hit.deployment_url}, ${hit.vercel_id}, ${hit.is_api_route}, ${hit.sample_rate}, ${hit.heartbeat}
         )
+        ON CONFLICT (project_name, event_id) WHERE event_id IS NOT NULL DO NOTHING
         RETURNING created_at, project_name, bot_name, bot_category
       ), upserted_daily AS (
         INSERT INTO bot_hits_daily (day, project_name, bot_name, bot_category, status_class, hits, verified_hits)
@@ -187,13 +192,17 @@ export function createDbClient(databaseUrl: string) {
           hits = bot_hits_daily.hits + EXCLUDED.hits,
           verified_hits = bot_hits_daily.verified_hits + EXCLUDED.verified_hits
         RETURNING 1
-      )
+      ), upserted_first_seen AS (
         INSERT INTO bot_first_seen (bot_name, first_seen, last_seen)
         SELECT bot_name, created_at, created_at FROM inserted_hit
         ON CONFLICT (bot_name) DO UPDATE SET
           last_seen = GREATEST(bot_first_seen.last_seen, EXCLUDED.last_seen),
           first_seen = LEAST(bot_first_seen.first_seen, EXCLUDED.first_seen)
+        RETURNING 1
+      )
+      SELECT EXISTS (SELECT 1 FROM inserted_hit) AS inserted
     `;
+    return result[0].inserted;
   }
 
   async function upsertProjectHeartbeat(input: {
@@ -930,7 +939,7 @@ export function createDbClient(databaseUrl: string) {
     const hasCategoryFilter = categoryClause.length > 0;
     const baseNocatCte = hasCategoryFilter ? `,
       base_nocat AS (
-        SELECT bot_name, bot_category, confidence, project_name, path, status_code, created_at, sample_rate
+        SELECT bot_name, bot_category, confidence, project_name, path, status_code, created_at, sample_rate, method, is_api_route
         FROM bot_hits
         WHERE created_at >= $1
           AND created_at < $2
@@ -957,7 +966,7 @@ export function createDbClient(databaseUrl: string) {
 
     const result = await sql.unsafe(`
       WITH base AS (
-        SELECT bot_name, bot_category, confidence, project_name, path, status_code, created_at, sample_rate
+        SELECT bot_name, bot_category, confidence, project_name, path, status_code, created_at, sample_rate, method, is_api_route
         FROM bot_hits
         WHERE created_at >= $1
           AND created_at < $2
@@ -984,7 +993,7 @@ export function createDbClient(databaseUrl: string) {
       ),
       top_pages AS (
         SELECT path, SUM(${HIT_WEIGHT_SQL})::double precision as count
-        FROM base GROUP BY path ORDER BY count DESC LIMIT 10
+        FROM base WHERE ${SUCCESSFUL_GET_SQL} GROUP BY path ORDER BY count DESC LIMIT 10
       ),
       daily AS (
         SELECT DATE(created_at)::text as date, SUM(${HIT_WEIGHT_SQL})::double precision as count
@@ -1058,12 +1067,12 @@ export function createDbClient(databaseUrl: string) {
       ),
       tpp_pc AS (
         SELECT project_name, path, SUM(${HIT_WEIGHT_SQL})::double precision as count, MAX(created_at)::text as last_seen
-        FROM base_proj GROUP BY project_name, path
+        FROM base_proj WHERE ${SUCCESSFUL_GET_SQL} GROUP BY project_name, path
       ),
       tpp_bc AS (
         SELECT project_name, path, bot_name,
           ROW_NUMBER() OVER (PARTITION BY project_name, path ORDER BY SUM(${HIT_WEIGHT_SQL}) DESC, bot_name) as rank
-        FROM base_proj GROUP BY project_name, path, bot_name
+        FROM base_proj WHERE ${SUCCESSFUL_GET_SQL} GROUP BY project_name, path, bot_name
       ),
       tpp AS (
         SELECT pc.project_name as project, pc.path, pc.count,
