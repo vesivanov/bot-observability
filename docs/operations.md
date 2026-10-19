@@ -53,6 +53,48 @@ IP, path or deployment ID. Historical synthetic proxy 200s also cannot be
 reconstructed; response-stage logging is needed to capture actual origin
 outcomes. A request-stage continuation must send unknown status (0).
 
+## Repair known historical records
+
+Migration 008 adds `history_repairs`, an audit ledger excluded from analytics.
+`scripts/repair-history.mjs` accepts an explicit, reviewed JSON manifest: exact
+project/host pairs with sender-code evidence, a fixed UTC cutoff, and expected
+counts. It changes legacy ID-less synthetic 200s to unknown, removes proven
+localhost tests with no deployment identity, and transfers their weighted
+daily increments in the same transaction. Genuine redirects and origin
+responses are preserved. It never merges requests into visits or deduplicates
+records by timing, IP, URL or deployment ID.
+
+The checked-in [October 19 manifest](repairs/2026-10-19-proxy-history.json) is
+specific to the audited installation; it is not an automatic migration and
+must not be reused for other installations. Review a dry run first:
+
+```bash
+node scripts/repair-history.mjs --manifest /private/path/reviewed-plan.json
+node scripts/repair-history.mjs --manifest /private/path/reviewed-plan.json \
+  --apply --backup /private/path/history-before-repair.json.gz
+```
+
+Dry runs roll back all changes. Apply requires a new absolute backup filename;
+the script writes a mode-0600 gzip JSON snapshot of every affected table,
+verifies its checksum/decompression/row counts before changing records, and
+records the backup hash and manifest in the ledger. Keep this backup private
+and outside the checkout; it includes original request metadata. Restoring a
+whole snapshot is an offline recovery operation: restore to a separate DB
+first and account for requests received since the snapshot.
+
+The script briefly locks raw events, daily rollups and first-seen metadata
+against concurrent writes; readers continue. New ingestion waits for the
+transaction. No application pause flag is required for this operation.
+Unexpected candidate counts, malformed weights, first/last-seen boundary
+changes or parity failures abort the entire repair. Reusing the same manifest
+is a no-op; reusing its ID with different contents is rejected.
+
+Retained raw events prove a lower bound for daily totals. Missing increments
+are restored, while excess aggregates predating known raw completeness are
+preserved. The script verifies each bucket's residual, including verified
+counts, before committing. A synthetic 200 can be corrected to unknown; the
+actual historical 200/404/500 cannot be reconstructed without response logs.
+
 ## Retain raw request detail
 
 Retention is optional and never runs automatically in Compose. Configure your own scheduling only if desired. The script removes raw rows before a **UTC midnight boundary**, in batches. It leaves daily counts, global first-seen metadata, health and receipts intact.

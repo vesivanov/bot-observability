@@ -94,6 +94,8 @@ Ordinary bot events return 201 with `stored: true`. Repeated project + event IDs
 
 A backend that can observe final outcomes may send `status_code`; the Next.js proxy example cannot. Use a real website request in this contract; connection testing should use the probe flow above.
 
+Bot events targeting loopback/localhost, or explicitly labeled `development`, `preview`, `test` or `staging`, are acknowledged with `stored: false, reason: "non_production"` by default. This prevents local tests from contaminating production analytics even when an old sender labels localhost as production. Set `BOT_INCLUDE_NON_PRODUCTION=true` to intentionally include them. This checks the submitted website, not the collector's listening address; connection probes remain available for local setup.
+
 ## What the dashboard shows
 
 Overview has request volume, comparison, AI share, error rate with outcome coverage, one main UTC trend, category/bot shares, successfully fetched paths and evidence links. Request volume includes every HTTP hop: `/` returning 301 and a subsequent GET of `/en` are two requests. Pages defaults to **Successful GETs**, showing only non-API GETs with reported 2xx outcomes; **All responses**, **Redirects**, errors and missing outcomes remain available separately. HEAD probes and redirect-only paths do not establish successful coverage. These are distinct project + path combinations, not canonical content, visits or a complete site inventory. Historical proxy-reported 200s may not represent final origin responses and are not reconstructed automatically. Hour-of-day distributions, company comparisons and movers are under **More analysis**. Bots offers ranking and detail; Raw Events shows retained request records. Redirects can be expected behavior; the dashboard does not diagnose them as broken automatically.
@@ -101,6 +103,8 @@ Overview has request volume, comparison, AI share, error rate with outcome cover
 Selections preserve project, category and time through navigation. Presets use rolling half-open intervals. Custom date ranges include both selected UTC dates internally as `[start midnight, next day after end midnight)`. Daily charts include both partial edge days. Aggregate-only history uses explicitly displayed UTC day bounds; it cannot recreate paths or exact request times. Raw Events keeps your selected period and explains its 90-day query cap and retention boundary.
 
 Volume is sample-expanded using `1/sample_rate`; sampled volume is an estimate. Unique pages are observed paths, not complete coverage of a sampled website. Known outcomes are final statuses 200–599. Error rate divides weighted 4xx/5xx requests by weighted known outcomes; all unknown yields **Unknown**. Stored integer historical rollups may have rounding differences for legacy arbitrary sample rates. Scope-sensitive global discovery is suppressed under a project/category filter.
+
+The **Redirects** filter/count includes 300, 301, 302, 303, 307 and 308. `304 Not Modified` is cache validation, remains in the **3xx** response class, and contributes neither a redirect nor a successful content GET. Exact `/api` and `/api/*` paths count as API traffic. For evidence-backed historical corrections, see [operations](docs/operations.md#repair-known-historical-records); application upgrades never guess historical final statuses or sessions.
 
 Latest received activity and optional heartbeat are distinct. No heartbeat is a supported configuration; quiet traffic alone does not establish disconnection. Across projects there is no combined “healthy” badge based on one project's latest heartbeat.
 
@@ -116,7 +120,7 @@ The dashboard is for trusted operators with a shared administrator credential an
 
 ## Configuration and operations
 
-Required: `DATABASE_URL`, `BOT_ADMIN_TOKEN`, `BOT_IP_HASH_SECRET`, `BOT_INGEST_TOKENS`. Optional collector settings: `BOT_COLLECTOR_ORIGIN`, `BOT_EVENT_RPM`, `BOT_QUERY_ALLOWLIST`. Single-project credentials may use `BOT_INGEST_TOKEN` plus `BOT_INGEST_PROJECT`. Legacy `BOT_LOG_TOKEN` ingestion is accepted only with the explicit `BOT_ACCEPT_LEGACY_INGEST=true` migration window; rotate it out afterwards.
+Required: `DATABASE_URL`, `BOT_ADMIN_TOKEN`, `BOT_IP_HASH_SECRET`, `BOT_INGEST_TOKENS`. Optional collector settings: `BOT_COLLECTOR_ORIGIN`, `BOT_EVENT_RPM`, `BOT_QUERY_ALLOWLIST`, `BOT_INCLUDE_NON_PRODUCTION`. Single-project credentials may use `BOT_INGEST_TOKEN` plus `BOT_INGEST_PROJECT`. Legacy `BOT_LOG_TOKEN` ingestion is accepted only with the explicit `BOT_ACCEPT_LEGACY_INGEST=true` migration window; rotate it out afterwards.
 
 All operator scripts load `.env`; nonempty shell values take precedence. Migrations are recorded in `schema_migrations`; already applied files never rerun. Pending migration 004 fills missing daily buckets while preserving existing uncertain history. Migration 005 establishes a conservative completeness watermark; prior pruning cannot be inferred from the oldest surviving row. Reconciliation requires a stopped collector and rebuilds only a proven or explicitly attested complete interval.
 

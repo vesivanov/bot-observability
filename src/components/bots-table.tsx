@@ -134,7 +134,7 @@ export function BotsTable({
             key: "redirects",
             label: "Redirects",
             field: "redirect_hits",
-            status: "3xx",
+            status: "redirects",
           },
           {
             key: "errors",

@@ -13,7 +13,7 @@ export function InvestigationFilters({ context, codes = [], bots, showBot = true
   const exact = Array.from(new Set(["200", "301", "302", "307", "308", "403", "404", "429", "500", "503", ...codes.filter(c => c.status_code).map(c => String(c.status_code)), ...(context.status && /^\d+$/.test(context.status) ? [context.status] : [])])).sort();
   return <div className="investigation-filters">
     <nav className="outcome-presets" aria-label="Response filters">
-      {[["successful", "Successful GETs"], ["all", "All responses"], ["3xx", "Redirects"], ["errors", "Errors"], ["unknown", "Missing status"]].map(([status, label]) => <Link key={label} href={dashboardHref(context, { status })} aria-current={(context.status ?? "all") === status ? "true" : undefined}>{label}</Link>)}
+      {[["successful", "Successful GETs"], ["all", "All responses"], ["redirects", "Redirects"], ["errors", "Errors"], ["unknown", "Missing status"]].map(([status, label]) => <Link key={label} href={dashboardHref(context, { status })} aria-current={(context.status ?? "all") === status ? "true" : undefined}>{label}</Link>)}
     </nav>
     <QueryForm key={JSON.stringify(context)} context={context} className={`page-search-form${context.path ? " page-search-detail" : ""}`}>
       {Object.entries(context).filter(([key, value]) => value != null && !["offset", "prefix", "status", ...(showBot ? ["bot"] : [])].includes(key)).map(([key, value]) => <input key={key} type="hidden" name={key} value={String(value)} />)}
@@ -23,7 +23,7 @@ export function InvestigationFilters({ context, codes = [], bots, showBot = true
       <FilterSelect label="Response" name="status" defaultValue={context.status ?? "all"} options={[
         { value: "successful", label: "Successful GETs · non-API" },
         { value: "all", label: "All responses" },
-        ...["2xx", "3xx", "4xx", "5xx", "errors", "unknown"].map(value => ({ value, label: requestStatusLabel(value) })),
+        ...["redirects", "2xx", "3xx", "4xx", "5xx", "errors", "unknown"].map(value => ({ value, label: requestStatusLabel(value) })),
         ...exact.map(value => ({ value, label: value })),
       ]} />
       <button className="apply-button" type="submit">Filter</button>

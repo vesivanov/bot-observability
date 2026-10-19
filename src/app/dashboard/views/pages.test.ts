@@ -28,6 +28,11 @@ it("opens ranked paths as page detail rather than dropping straight into raw row
   const links=[...html.matchAll(/href="([^"]+)"/g)].map(match=>new URL(match[1],"https://example.test").searchParams);
   expect(links.some(query=>query.get("view")==="pages" && query.get("path")==="/en/old" && query.get("status")==="301" && query.get("bot")==="GPTBot")).toBe(true);
 });
+it("narrows a 3xx redirect count link to redirects so it cannot include 304 records", async () => {
+  const html = renderToStaticMarkup(await PagesViewServer({ context: { ...context, path: undefined, status: "3xx" }, range })).replaceAll("&amp;", "&");
+  const links = [...html.matchAll(/href="([^"]+)"/g)].map(match => new URL(match[1], "https://example.test").searchParams);
+  expect(links.some(query => query.get("view") === "pages" && query.get("path") === "/en/old" && query.get("status") === "redirects")).toBe(true);
+});
 describe("historical limits", () => {
   it("does not substitute incomplete raw results for aggregate history", async () => {
     const longRange=resolveDashboardRange("365",new Date("2026-10-04T12:00:00Z"));
