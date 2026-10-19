@@ -120,7 +120,7 @@ The dashboard is for trusted operators with a shared administrator credential an
 
 ## Configuration and operations
 
-Required: `DATABASE_URL`, `BOT_ADMIN_TOKEN`, `BOT_IP_HASH_SECRET`, `BOT_INGEST_TOKENS`. Optional collector settings: `BOT_COLLECTOR_ORIGIN`, `BOT_EVENT_RPM`, `BOT_QUERY_ALLOWLIST`. Single-project credentials may use `BOT_INGEST_TOKEN` plus `BOT_INGEST_PROJECT`. Legacy `BOT_LOG_TOKEN` ingestion is accepted only with the explicit `BOT_ACCEPT_LEGACY_INGEST=true` migration window; rotate it out afterwards.
+Required: `DATABASE_URL`, `BOT_ADMIN_TOKEN`, `BOT_IP_HASH_SECRET`, `BOT_INGEST_TOKENS`. Optional collector settings: `BOT_COLLECTOR_ORIGIN`, `BOT_EVENT_RPM`, `BOT_QUERY_ALLOWLIST`, `BOT_INCLUDE_NON_PRODUCTION`. Single-project credentials may use `BOT_INGEST_TOKEN` plus `BOT_INGEST_PROJECT`. Legacy `BOT_LOG_TOKEN` ingestion is accepted only with the explicit `BOT_ACCEPT_LEGACY_INGEST=true` migration window; rotate it out afterwards.
 
 All operator scripts load `.env`; nonempty shell values take precedence. Migrations are recorded in `schema_migrations`; already applied files never rerun. Pending migration 004 fills missing daily buckets while preserving existing uncertain history. Migration 005 establishes a conservative completeness watermark; prior pruning cannot be inferred from the oldest surviving row. Reconciliation requires a stopped collector and rebuilds only a proven or explicitly attested complete interval.
 
