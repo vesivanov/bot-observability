@@ -122,7 +122,7 @@ export async function EventsViewServer({
         </label>
         <FilterSelect name="status" label="Response status" defaultValue={statusFilter ?? ""} options={[
           { value: "", label: "All outcomes" },
-          ...["2xx", "3xx", "4xx", "5xx", "errors", "unknown"].map((value) => ({ value, label: value === "unknown" ? "Not captured" : value === "errors" ? "4xx + 5xx" : value })),
+          ...["redirects", "2xx", "3xx", "4xx", "5xx", "errors", "unknown"].map((value) => ({ value, label: value === "redirects" ? "Redirects" : value === "unknown" ? "Not captured" : value === "errors" ? "4xx + 5xx" : value })),
           ...Array.from(new Set(["200", "301", "302", "304", "307", "308", "403", "404", "410", "429", "500", "502", "503", ...(statusFilter && /^\d+$/.test(statusFilter) ? [statusFilter] : [])])).map((value) => ({value, label: value})),
         ]} />
         <FilterSelect name="limit" label="Rows per page" defaultValue={limit.toString()} options={[25,50,100,250,500].map((value) => ({ value: String(value), label: String(value) }))} />

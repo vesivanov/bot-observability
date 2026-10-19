@@ -13,6 +13,7 @@ import {
 } from "@/lib/auth";
 import { storedIp } from "@/lib/ip-storage";
 import { normalizeSampleRate } from "@/lib/sampling";
+import { isNonProductionTraffic } from "@/lib/traffic-scope";
 
 
 const MAX_BODY_BYTES = 32 * 1024;
@@ -128,6 +129,10 @@ export async function ingestRequest(request: Request) {
 
   if (!match && !heartbeat && !probe) {
     return NextResponse.json({ stored: false, reason: "not_bot" });
+  }
+
+  if (!heartbeat && !probe && process.env.BOT_INCLUDE_NON_PRODUCTION !== "true" && isNonProductionTraffic(payload)) {
+    return NextResponse.json({ stored: false, reason: "non_production" });
   }
 
   const quotaKey = `${heartbeat || probe ? "control" : "bot"}:${projectName}`;

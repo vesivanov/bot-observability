@@ -63,6 +63,7 @@ describe.skipIf(!url)("request counting", () => {
     const project = projects[2];
     for (const event of [
       hit({ path: "/", status_code: 301 }),
+      hit({ path: "/en", status_code: 304 }),
       hit({ sample_rate: 0.5 }),
       hit({ method: "HEAD" }),
       hit({ path: "/missing", status_code: 404 }),
@@ -73,9 +74,16 @@ describe.skipIf(!url)("request counting", () => {
       hit({ method: "POST" }),
     ]) await db.insertHit({ ...event, project_name: project, event_id: randomUUID() });
     const all = await db.requestAnalysis({ from, to, project, status: "all" });
-    expect(all.summary.total_hits).toBe(10);
+    expect(all.summary.total_hits).toBe(11);
     expect(all.summary.redirect_hits).toBe(1);
     expect(all.pageCount).toBe(7);
+    const redirects = await db.requestAnalysis({ from, to, project, status: "redirects" });
+    expect(redirects.summary).toMatchObject({ total_hits: 1, redirect_hits: 1 });
+    expect(redirects.pages.map(row => row.path)).toEqual(["/"]);
+    expect((await db.queryFiltered({ from, to, project, status: "redirects" })).map(row => row.status_code)).toEqual([301]);
+    expect((await db.requestAnalysis({ from, to, project, status: "3xx" })).summary.total_hits).toBe(2);
+    const outcomes = await db.fetchStatusBatch(from, to, project);
+    expect(outcomes.summary).toMatchObject({ redirect_hits: 1, api_route_hits: 3 });
     const successful = await db.requestAnalysis({ from, to, project, status: "successful" });
     expect(successful.summary).toMatchObject({ total_hits: 2, redirect_hits: 0, error_hits: 0, unique_pages: 1 });
     expect(successful.pages.map(row => row.path)).toEqual(["/en"]);
@@ -84,7 +92,7 @@ describe.skipIf(!url)("request counting", () => {
     expect(events[0]).toMatchObject({ method: "GET", status_code: 200, path: "/en" });
     expect((await db.allBotDetails(from, to, project, undefined, "successful"))[0].total_hits).toBe(2);
     const stats = await db.fetchStatsBatch(from, to, project);
-    expect(stats.total).toBe(10);
+    expect(stats.total).toBe(11);
     expect(stats.topPagesByProject).toHaveLength(1);
     expect(stats.topPagesByProject[0]).toMatchObject({ path: "/en", count: 2 });
     expect(stats.topPages).toEqual([{ path: "/en", count: 2 }]);

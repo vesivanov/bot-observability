@@ -43,11 +43,15 @@ const HIT_WEIGHT_SQL = "1.0/NULLIF(sample_rate::text::numeric,0)";
 // Successful non-API GETs identify fetched paths. Redirects, HEAD probes and
 // unknown outcomes remain in request volume, but cannot establish coverage.
 const SUCCESSFUL_GET_SQL = "status_code >= 200 AND status_code < 300 AND method = 'GET' AND is_api_route = FALSE AND path != '/api' AND path NOT LIKE '/api/%'";
+// 304 is cache validation, not a redirect hop. Keep the full 3xx class
+// available separately, including in daily rollups that have no exact codes.
+const REDIRECT_SQL = "status_code IN (300, 301, 302, 303, 307, 308)";
 
 function requestStatusSql(status: string | undefined, values: (string | number)[]): string {
   const valid = parseRequestStatus(status);
   if (!valid || valid === "all") return "";
   if (valid === "successful") return `AND (${SUCCESSFUL_GET_SQL})`;
+  if (valid === "redirects") return `AND (${REDIRECT_SQL})`;
   if (valid === "unknown") return "AND (status_code < 200 OR status_code >= 600)";
   if (valid === "errors") return "AND status_code >= 400 AND status_code < 600";
   if (valid.endsWith("xx")) {
@@ -333,7 +337,7 @@ export function createDbClient(databaseUrl: string) {
     const offset = `$${values.push(Math.max(0, params.offset ?? 0))}`;
     const measures = `SUM(weight)::double precision AS total_hits,
       COALESCE(SUM(weight) FILTER (WHERE status_code >= 200 AND status_code < 600), 0)::double precision AS known_status_hits,
-      COALESCE(SUM(weight) FILTER (WHERE status_code >= 300 AND status_code < 400), 0)::double precision AS redirect_hits,
+      COALESCE(SUM(weight) FILTER (WHERE ${REDIRECT_SQL}), 0)::double precision AS redirect_hits,
       COALESCE(SUM(weight) FILTER (WHERE status_code >= 400 AND status_code < 600), 0)::double precision AS error_hits,
       COUNT(DISTINCT (project_name, path))::int AS unique_pages,
       MAX(created_at)::text AS last_seen`;
@@ -689,11 +693,11 @@ export function createDbClient(databaseUrl: string) {
           COALESCE(SUM(${HIT_WEIGHT_SQL}), 0)::double precision AS total_hits,
           COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code >= 200 AND status_code < 600), 0)::double precision AS known_status_hits,
           COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code >= 200 AND status_code < 300), 0)::double precision AS success_hits,
-          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code >= 300 AND status_code < 400), 0)::double precision AS redirect_hits,
+          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE ${REDIRECT_SQL}), 0)::double precision AS redirect_hits,
           COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code >= 400 AND status_code < 500), 0)::double precision AS client_error_hits,
           COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE status_code >= 500 AND status_code < 600), 0)::double precision AS server_error_hits,
           COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE (status_code < 200 OR status_code >= 600)), 0)::double precision AS unknown_status_hits,
-          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE is_api_route = TRUE OR path LIKE '/api/%'), 0)::double precision AS api_route_hits,
+          COALESCE(SUM(${HIT_WEIGHT_SQL}) FILTER (WHERE is_api_route = TRUE OR path = '/api' OR path LIKE '/api/%'), 0)::double precision AS api_route_hits,
           COALESCE(ROUND(SUM(${HIT_WEIGHT_SQL}) FILTER (
             WHERE path ~* '(^|/)(admin|login|wp-admin|wp-login|phpmyadmin|xmlrpc\\.php|config\\.php)(/|$|\\.)'
                OR path ~* '(^|/)(\\.env|\\.git|\\.aws|\\.ssh|\\.htaccess|\\.htpasswd)($|/)'
@@ -833,7 +837,7 @@ export function createDbClient(databaseUrl: string) {
       sensitive AS (
         SELECT * FROM base
         WHERE (
-          is_api_route = TRUE OR path LIKE '/api/%'
+          is_api_route = TRUE OR path = '/api' OR path LIKE '/api/%'
           OR path ~* '(^|/)(admin|login|wp-admin|wp-login|phpmyadmin|xmlrpc\\.php|config\\.php)(/|$|\\.)'
           OR path ~* '(^|/)(\\.env|\\.git|\\.aws|\\.ssh|\\.htaccess|\\.htpasswd)($|/)'
           OR path ~* '/(etc/passwd|etc/shadow|proc/self)'

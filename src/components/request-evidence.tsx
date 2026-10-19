@@ -144,7 +144,7 @@ export function RequestEvidence({
                           view: "pages",
                           project: row.project,
                           path: row.path,
-                          status: context.status && context.status !== "all" ? context.status : "3xx",
+                          status: context.status && !["all", "3xx"].includes(context.status) ? context.status : "redirects",
                           offset: undefined,
                         })}
                       >

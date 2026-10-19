@@ -39,6 +39,7 @@ export function proxy(request: NextRequest, event: NextFetchEvent) {
         event_id: crypto.randomUUID(), // Reuse this ID if adding delivery retries.
         url: request.nextUrl.origin + request.nextUrl.pathname,
         method: request.method,
+        environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV,
         user_agent: ua,
         ip,
         status_code: 0, // A request-stage proxy cannot observe the final status.

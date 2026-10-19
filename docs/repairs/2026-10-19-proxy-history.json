@@ -1,0 +1,25 @@
+{
+  "id": "2026-10-19-proxy-history",
+  "before": "2026-10-19T21:30:00.000Z",
+  "unknownStatusSources": [
+    {
+      "project": "blog",
+      "host": "vesivanov.com",
+      "evidence": "proxy.ts history e324073 and 18e99f8 report NextResponse.next()/rewrite sentinel 200. Fixed by vesivanov/blog@783965e; redirects issued by the proxy remain valid."
+    },
+    {
+      "project": "digital-employee-smb",
+      "host": "yardwork.dev",
+      "evidence": "src/proxy.ts history df7d8f0 and 131857f report NextResponse.next() sentinel 200. Fixed by vesivanov/digital-employee-smb@eac5042; redirects issued by the proxy remain valid."
+    }
+  ],
+  "excludeLocalSources": [
+    { "project": "digital-employee-smb", "host": "localhost:3000", "evidence": "Local curl/Generic Bot tests, no deployment URL or deployment ID." },
+    { "project": "digital-employee-smb", "host": "localhost:3001", "evidence": "Local curl tests, no deployment URL or deployment ID." },
+    { "project": "digital-employee-smb", "host": "localhost:3111", "evidence": "Local curl tests, no deployment URL or deployment ID." },
+    { "project": "digital-employee-smb", "host": "localhost:4173", "evidence": "Local curl tests, no deployment URL or deployment ID." },
+    { "project": "digital-employee-smb", "host": "localhost:4174", "evidence": "Local curl tests, no deployment URL or deployment ID." },
+    { "project": "yardwork", "host": "localhost:3002", "evidence": "Local curl tests under the old project name, no deployment URL or deployment ID." }
+  ],
+  "expected": { "statusRows": 39145, "excludedRows": 399, "restoredRollupHits": 11, "aggregateOnlyRequests": 1 }
+}

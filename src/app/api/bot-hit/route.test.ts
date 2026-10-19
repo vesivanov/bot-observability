@@ -44,6 +44,7 @@ describe("POST /api/bot-hit", () => {
       BOT_INGEST_TOKENS: JSON.stringify({ "tracked-site": ingestToken }),
       BOT_LOG_TOKEN: "",
       BOT_ACCEPT_LEGACY_INGEST: "false",
+      BOT_INCLUDE_NON_PRODUCTION: "false",
     };
     vi.useFakeTimers();
     vi.setSystemTime(new Date(Date.UTC(2026, 9, 2, 12) + ++clockTick * 120_000));
@@ -132,6 +133,34 @@ describe("POST /api/bot-hit", () => {
     });
     expect(mocks.insertHit.mock.calls[0][0].ip).toHaveLength(64);
     expect(mocks.insertHit.mock.calls[0][0].ip).not.toContain("203.0.113.10");
+  });
+
+  it("excludes local and declared non-production requests before storage, with an explicit opt-in", async () => {
+    const headers = { authorization: `Bearer ${ingestToken}` };
+    for (const payload of [
+      { url: "http://localhost:3000/en", environment: "production" },
+      { host: "127.0.0.2:4000" }, { url: "http://[::1]/en" },
+      { url: "http://app.localhost/en" }, { host: "LOCALHOST.:3000" },
+      { environment: "preview" }, { environment: "development" },
+      { environment: "staging" }, { environment: "test" },
+    ]) {
+      const response = await POST(makeRequest({ user_agent: "GPTBot/1.0", ...payload }, headers));
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ stored: false, reason: "non_production" });
+    }
+    expect(mocks.insertHit).not.toHaveBeenCalled();
+    expect(mocks.verifyBot).not.toHaveBeenCalled();
+    expect((await POST(makeRequest({ user_agent: "GPTBot/1.0", url: "https://localhost.example/en" }, headers))).status).toBe(201);
+    process.env.BOT_INCLUDE_NON_PRODUCTION = "true";
+    expect((await POST(makeRequest({ user_agent: "GPTBot/1.0", url: "http://localhost:3000/en" }, headers))).status).toBe(201);
+    expect(mocks.insertHit).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps connection probes available for local setup without adding traffic", async () => {
+    const response = await POST(makeRequest({ probe: "connection", url: "http://localhost:3000", environment: "development" }, { authorization: `Bearer ${ingestToken}` }));
+    expect(await response.json()).toMatchObject({ received: true, probe: "connection" });
+    expect(mocks.insertHit).not.toHaveBeenCalled();
+    expect(mocks.recordConnectionReceipt).toHaveBeenCalledOnce();
   });
 
   it("classifies the UA instead of trusting reported identity", async () => {
