@@ -20,7 +20,7 @@ describe("bot investigation evidence", () => {
         bot_name: "ChatGPT-User",
         total_hits: 10,
         known_status_hits: 8,
-        redirect_hits: 4,
+        redirect_hits: 8,
         error_hits: 2,
         unique_pages: 3,
       },
@@ -29,12 +29,20 @@ describe("bot investigation evidence", () => {
     projectFilter: "docs",
     categoryFilter: "ai_agent",
   };
-  it("uses known outcomes as the denominator for redirects and errors", () => {
+  it("takes redirect shares over known outcomes plus redirects, and error shares over known requests", () => {
     const text = renderToStaticMarkup(createElement(BotsTable, props))
       .replace(/<[^>]*>/g, "")
       .replace(/\s+/g, " ");
-    expect(text).toContain("4 50%");
+    expect(text).toContain("8 50%");
     expect(text).toContain("2 25%");
+  });
+  it("does not add redirects twice when the table is filtered to redirects", () => {
+    const text = renderToStaticMarkup(createElement(BotsTable, {
+      ...props,
+      statusFilter: "redirects",
+      outcomes: [{ ...props.outcomes[0], total_hits: 8, known_status_hits: 8, error_hits: 0 }],
+    })).replace(/<[^>]*>/g, "").replace(/\s+/g, " ");
+    expect(text).toContain("8 100%");
   });
   it("opens the bot's errors with the same project, category and custom range", () => {
     const html = renderToStaticMarkup(

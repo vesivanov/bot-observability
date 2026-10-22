@@ -1,5 +1,10 @@
 # Historical counting correction — 2026-10-19
 
+> **Status change reversed on 2026-10-22.** Changing the forwarded 200s to
+> unknown left the dashboard with no successful responses for the blog and
+> Yardwork, past or future. See the [reversal record](2026-10-22-restore-proxy-statuses.md).
+> The localhost exclusions and the 11 restored daily increments still stand.
+
 Applied the [reviewed manifest](2026-10-19-proxy-history.json) to production
 with `scripts/repair-history.mjs`, after a production dry run and PostgreSQL
 integration tests. The `history_repairs` ledger records the manifest and

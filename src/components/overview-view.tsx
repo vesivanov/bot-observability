@@ -31,6 +31,7 @@ interface PeriodStats {
   total: number;
   errorHits: number;
   knownStatusHits: number;
+  redirectHits?: number;
   categories: CategoryCount[];
   topBotsWithConfidence: BotConfidenceCount[];
   aiBotsWithConfidence: BotConfidenceCount[];
@@ -95,7 +96,7 @@ export function OverviewView({
         <StatTile
           href={eventHref({period,project:projectFilter,category:categoryFilter})}
           label="Request volume"
-          detail={`${trendLabel} vs previous equal period · includes redirect hops · estimated if sampled`}
+          detail={`${trendLabel} vs previous equal period · ${Math.round(stats.redirectHits ?? 0).toLocaleString()} redirects not counted · estimated if sampled`}
           value={stats.total.toLocaleString()}
         />
         <StatTile
@@ -175,7 +176,7 @@ export function OverviewView({
         )}
       </div>
 
-      <details className="measurement-note"><summary>How to read these numbers</summary><p>Volume counts all HTTP requests, including redirects and repeat fetches. A redirect followed by its destination is two requests. Top successfully fetched paths includes only reported 2xx non-API GET requests, excluding redirect hops and HEAD probes. These paths are not unique canonical content or sessions. Volume uses sample weighting; sampled totals are estimates. The error rate divides reported 4xx/5xx responses by requests with a known outcome. Historical proxy-reported 200s may not represent final responses. UTC charts include partial days at the selection boundaries. AI requests do not measure people, sessions, citations or referrals.</p></details>
+      <details className="measurement-note"><summary>How to read these numbers</summary><p>Volume counts HTTP requests except redirect hops (300, 301, 302, 303, 307 and 308), which are shown separately: a bot requesting / and following its redirect to /en made one request, plus one redirect. Repeat fetches still count each time. Ranges served from daily totals also leave out 304 responses, because daily totals keep only the status class. Top successfully fetched paths includes only reported 2xx non-API GET requests, excluding HEAD probes. A Next.js proxy reports 200 for a request it forwards; that means forwarded, not a verified origin 200. These paths are not unique canonical content or sessions. Volume uses sample weighting; sampled totals are estimates. The error rate divides reported 4xx/5xx responses by requests with a known outcome. UTC charts include partial days at the selection boundaries. AI requests do not measure people, sessions, citations or referrals.</p></details>
     </div>
   );
 }

@@ -67,6 +67,7 @@ export async function OverviewViewServer({
       total: currentRollup.total,
       errorHits: currentRollup.errorHits,
       knownStatusHits: currentRollup.knownStatusHits,
+      redirectHits: currentRollup.redirectHits,
       categories: currentRollup.categories,
       topBotsWithConfidence: currentRollup.topBots,
       aiBotsWithConfidence: currentRollup.aiBotsWithConfidence,

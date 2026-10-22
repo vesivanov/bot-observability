@@ -155,8 +155,11 @@ describe.skipIf(!url)("request investigation", () => {
       "ai_agent",
       "ChatGPT-User",
     );
-    expect(rollup.total).toBe(11);
-    expect(rollup.topBots.map((row) => row.bot_name)).toEqual(["ChatGPT-User"]);
+    // Every ChatGPT-User fixture is a 301: the normalized category still
+    // selects them all, as redirects rather than requests.
+    expect(rollup.total).toBe(0);
+    expect(rollup.redirectHits).toBe(11);
+    expect(rollup.topBots).toEqual([]);
 
     const analysis = await db.requestAnalysis({
       from,

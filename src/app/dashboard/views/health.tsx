@@ -83,9 +83,14 @@ export async function HealthViewServer({
     for (const row of rollup.dailyStatus) {
       bucketTotals.set(row.status_class, (bucketTotals.get(row.status_class) ?? 0) + row.count);
     }
+    // Health describes every response, including the redirects that request
+    // totals leave out, so it derives its totals from the full status mix.
+    const responseTotal = Array.from(bucketTotals.values()).reduce((sum, count) => sum + count, 0);
     const clientErrorHits = bucketTotals.get("4xx") ?? 0;
     const serverErrorHits = bucketTotals.get("5xx") ?? 0;
-    const unknownCount = Math.max(0, rollup.total - rollup.knownStatusHits);
+    const errorHits = clientErrorHits + serverErrorHits;
+    const unknownCount = bucketTotals.get("unknown") ?? 0;
+    const knownStatusHits = responseTotal - unknownCount;
     const buckets: StatusBucket[] = ["2xx", "3xx", "4xx", "5xx"]
       .map((status_class) => ({ status_class, count: bucketTotals.get(status_class) ?? 0 }))
       .concat(unknownCount > 0 ? [{ status_class: "unknown", count: unknownCount }] : []);
@@ -95,8 +100,8 @@ export async function HealthViewServer({
       <div className="space-y-4">
         {statusFilter && <p className="evidence-caption">Aggregate summaries include all outcomes. Exact code and page filters require retained request detail. <Link className="inline-evidence-link" href={dashboardHref(context,{status:undefined})}>Clear status filter</Link></p>}
         <div className="metrics-grid">
-          <StatTile label="Known status" value={`${pct(rollup.knownStatusHits, rollup.total)}%`} detail={`${rollup.knownStatusHits.toLocaleString()} of ${rollup.total.toLocaleString()} hits`} />
-          <StatTile label="Error rate" value={rollup.knownStatusHits > 0 ? `${pct(rollup.errorHits, rollup.knownStatusHits)}%` : "Unknown"} detail={`${rollup.errorHits.toLocaleString()} 4xx/5xx hits`} accent={errorRateAccent(pct(rollup.errorHits, rollup.knownStatusHits))} />
+          <StatTile label="Known status" value={`${pct(knownStatusHits, responseTotal)}%`} detail={`${knownStatusHits.toLocaleString()} of ${responseTotal.toLocaleString()} hits`} />
+          <StatTile label="Error rate" value={knownStatusHits > 0 ? `${pct(errorHits, knownStatusHits)}%` : "Unknown"} detail={`${errorHits.toLocaleString()} 4xx/5xx hits`} accent={errorRateAccent(pct(errorHits, knownStatusHits))} />
           <StatTile label="4xx hits" value={clientErrorHits.toLocaleString()} detail="Client errors" accent={clientErrorHits > 0 ? "text-orange-300" : "text-neutral-300"} />
           <StatTile label="5xx hits" value={serverErrorHits.toLocaleString()} detail="Server errors" accent={serverErrorHits > 0 ? "text-rose-300" : "text-neutral-300"} />
         </div>
@@ -116,7 +121,7 @@ export async function HealthViewServer({
                   <div key={statusClass}>
                     <div className="mb-1 flex items-center justify-between text-xs">
                       <span className="font-mono text-neutral-300">{statusClassLabel(statusClass)}</span>
-                      <span className="font-mono text-neutral-500">{count.toLocaleString()} · {pct(count, rollup.total)}%</span>
+                      <span className="font-mono text-neutral-500">{count.toLocaleString()} · {pct(count, responseTotal)}%</span>
                     </div>
                     <BarMeter value={(count / maxBucket) * 100} color={statusClassTone(statusClass)} />
                   </div>

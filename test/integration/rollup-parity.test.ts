@@ -66,6 +66,8 @@ describe.skipIf(!url)("rollup / raw parity", () => {
     await db.insertHit(hit({ bot_name: BOT_B, bot_category: "search_crawler", status_code: 200, confidence: "verified" }));
     await db.insertHit(hit({ bot_name: BOT_B, bot_category: "search_crawler", status_code: 500, confidence: "ua_only" }));
     await db.insertHit(hit({ bot_name: BOT_C, bot_category: "generic", status_code: 200, confidence: "ua_only" }));
+    // A redirect hop is counted separately by both readers, never as a request.
+    await db.insertHit(hit({ bot_name: BOT_C, bot_category: "generic", status_code: 301, path: "/", confidence: "ua_only" }));
   });
 
   afterAll(async () => {
@@ -94,6 +96,9 @@ describe.skipIf(!url)("rollup / raw parity", () => {
 
     expect(rollup.knownStatusHits).toBe(6);
     expect(rawStats.knownStatusHits).toBe(6);
+
+    expect(rollup.redirectHits).toBe(1);
+    expect(rawStats.redirectHits).toBe(1);
 
     // Single-day fixture: both should report exactly one day with count 6.
     expect(rollup.dailyTrend).toHaveLength(1);
