@@ -2,8 +2,8 @@
 
 **Status:** applied to production on 2026-10-22 at 13:33 UTC, after the fixed
 senders deployed (13:20:54 UTC, `--forwarded-until`). It restored 39,145 rows
-and set 1,617 interim `0`s to `200`. The private pre-restore backup and its
-SHA-256 are recorded in `history_repairs` as
+and set 1,617 interim `0`s to `200`. A private pre-restore backup was kept
+outside the checkout; its SHA-256 is recorded in `history_repairs` as
 `revert-status:2026-10-19-proxy-history`. Production then matched the
 rehearsal below: 90,593 pre-repair records at their original status, and raw
 records and daily totals disagreeing only in the one aggregate-only bucket.
