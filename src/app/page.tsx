@@ -90,7 +90,7 @@ const PREVIEW_EVENTS: { time: string; bot: string; category: string; statusCode:
 ];
 
 const HOW_IT_WORKS = [
-  ["1", "Send events", "Your website sends bot request details to /api/bot-hit. The Next.js request proxy reports an unknown final status; a backend that observes the response can include it."],
+  ["1", "Send events", "Your website sends bot request details to /api/bot-hit. The Next.js request proxy reports redirects it returns and 200 for requests it forwards; a backend that observes the final response can report that instead."],
   ["2", "Bots get identified", "Every event is matched against 130+ known crawler patterns and (where possible) checked using forward-confirmed reverse DNS for supported search crawlers, server-side, on the way in."],
   ["3", "You inspect the traffic", "Review request counts, observed pages and reported outcomes, with links to retained request evidence."],
 ];

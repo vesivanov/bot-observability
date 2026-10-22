@@ -25,6 +25,7 @@ async function deliver(payload: Record<string, unknown>) {
 }
 
 export function proxy(request: NextRequest, event: NextFetchEvent) {
+  const response = NextResponse.next();
   const ua = request.headers.get("user-agent") ?? "";
   const probe = ua === PROBE_UA;
   if (probe || likelyBot.test(ua)) {
@@ -42,14 +43,18 @@ export function proxy(request: NextRequest, event: NextFetchEvent) {
         environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV,
         user_agent: ua,
         ip,
-        status_code: 0, // A request-stage proxy cannot observe the final status.
+        // 200 means "forwarded": a request-stage proxy runs before the page
+        // renders, so a later 404/500 is not visible here. Never send 0 for
+        // forwarded requests; it leaves the dashboard without any outcomes.
+        // A redirect this proxy returns itself should report its own status.
+        status_code: response.status,
         sample_rate: rate,
       };
       // Best effort: use the platform's request lifecycle, with a bounded timeout.
       event.waitUntil(deliver(payload));
     }
   }
-  return NextResponse.next();
+  return response;
 }
 
 export const config = { matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"] };

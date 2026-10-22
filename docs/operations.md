@@ -49,9 +49,10 @@ reuse that ID for delivery retries. Duplicate IDs are acknowledged without
 incrementing raw events, weighted daily counts or first/last seen. Deduplication
 lasts while the original raw event is retained, so replaying a pruned event can
 count again. Existing records without IDs cannot be deduplicated safely by
-IP, path or deployment ID. Historical synthetic proxy 200s also cannot be
-reconstructed; response-stage logging is needed to capture actual origin
-outcomes. A request-stage continuation must send unknown status (0).
+IP, path or deployment ID. A request-stage proxy reports `200` for a request
+it forwards, meaning "forwarded" rather than a verified origin response; it
+must not send `0` for those requests, or every outcome becomes unknown.
+Response-stage logging is needed to capture actual origin outcomes.
 
 ## Repair known historical records
 
@@ -63,6 +64,11 @@ localhost tests with no deployment identity, and transfers their weighted
 daily increments in the same transaction. Genuine redirects and origin
 responses are preserved. It never merges requests into visits or deduplicates
 records by timing, IP, URL or deployment ID.
+
+Do not use `unknownStatusSources` for a proxy's forwarded `200`s. The October
+19 repair did that for two websites and left the dashboard with no successful
+responses for either; its status change was reversed on October 22 ([record](repairs/2026-10-22-restore-proxy-statuses.md)),
+while its localhost exclusions and restored daily increments were kept.
 
 The checked-in [October 19 manifest](repairs/2026-10-19-proxy-history.json) is
 specific to the audited installation; it is not an automatic migration and
@@ -92,8 +98,29 @@ is a no-op; reusing its ID with different contents is rejected.
 Retained raw events prove a lower bound for daily totals. Missing increments
 are restored, while excess aggregates predating known raw completeness are
 preserved. The script verifies each bucket's residual, including verified
-counts, before committing. A synthetic 200 can be corrected to unknown; the
-actual historical 200/404/500 cannot be reconstructed without response logs.
+counts, before committing. The actual historical 200/404/500 behind a
+forwarded request cannot be reconstructed without response logs.
+
+### Revert a status repair
+
+`scripts/revert-status-repair.mjs` undoes the status part of an applied repair
+from that repair's own backup, whose SHA-256 must match the ledger. It returns
+exactly the rows the repair changed to their original `200`, and also sets
+`200` on requests that the same project/hosts reported as `0` with event IDs
+before `--forwarded-until`. Deploy the fixed senders first, then pass the UTC
+time they went live; the script refuses to run while those hosts still report
+forwarded requests as `0` after that time. It uses the same locks, dry run,
+private backup, parity check and ledger as the repair:
+
+```bash
+node scripts/revert-status-repair.mjs --repair <repair id> \
+  --repair-backup /private/path/history-before-repair.json.gz \
+  --forwarded-until 2026-10-22T18:00:00Z
+node scripts/revert-status-repair.mjs --repair <repair id> \
+  --repair-backup /private/path/history-before-repair.json.gz \
+  --forwarded-until 2026-10-22T18:00:00Z \
+  --apply --backup /private/path/history-before-revert.json.gz
+```
 
 ## Retain raw request detail
 

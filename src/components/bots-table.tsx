@@ -17,6 +17,7 @@ import {
   type SortableColumn,
 } from "@/components/sortable-table";
 import type { BotDetail, BotRequestOutcomes } from "@/lib/schema";
+import { selectsRedirects } from "@/lib/request-status";
 
 // Client component: SortableTable's columns carry render closures, which
 // can't cross the server/client boundary as props — so this must be a
@@ -151,7 +152,11 @@ export function BotsTable({
         sortAccessor: (b: BotDetail) =>
           metrics.get(b.bot_name)?.[option.field] ?? 0,
         render: (b: BotDetail) => {
-          const count = metrics.get(b.bot_name)?.[option.field] ?? 0;
+          const row = metrics.get(b.bot_name);
+          const count = row?.[option.field] ?? 0;
+          // Known request outcomes leave out redirects, so a redirect share is
+          // taken over known outcomes plus redirects.
+          const known = (row?.known_status_hits ?? 0) + (option.field === "redirect_hits" && !selectsRedirects(statusFilter) ? count : 0);
           return count ? (
             <Link
               className="inline-evidence-link font-mono"
@@ -164,7 +169,7 @@ export function BotsTable({
             >
               {count.toLocaleString()}{" "}
               <span className="text-neutral-500">
-                {pct(count, metrics.get(b.bot_name)?.known_status_hits ?? 0)}%
+                {pct(count, known)}%
               </span>
             </Link>
           ) : (
@@ -217,7 +222,7 @@ export function BotsTable({
       )}
       {!aggregate && (
         <p className="evidence-caption">
-          Redirect and error percentages use requests with a captured outcome.
+          Error percentages use requests with a captured outcome; redirect percentages use those requests plus the redirects.
         </p>
       )}
     </div>
