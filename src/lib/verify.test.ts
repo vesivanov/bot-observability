@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { isHostnameInDomain, verifyBot } from "./verify";
+import { ipMatchesCidr, isHostnameInDomain, verifyBot } from "./verify";
+import { BOT_RANGES } from "./bot-ranges.generated";
 
 describe("DNS hostname verification", () => {
   it("accepts the registered domain and legitimate subdomains", () => {
@@ -41,5 +42,38 @@ describe("DNS hostname verification", () => {
     } finally {
       fetchMock.mockRestore();
     }
+  });
+});
+
+describe("Published-range verification (OpenAI, Anthropic, Perplexity)", () => {
+  it("verifies a PerplexityBot hit inside its published list without any DNS call", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    try {
+      expect(await verifyBot("PerplexityBot", "18.97.9.100", "test-perplexity-in-range")).toBe("verified");
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("rejects a claimed AI crawler from an address outside every published list", async () => {
+    expect(await verifyBot("GPTBot", "203.0.113.7", "test-gptbot-documentation-range")).toBe("ua_only");
+    expect(await verifyBot("ClaudeBot", "8.8.8.8", "test-claudebot-foreign")).toBe("ua_only");
+  });
+
+  it("never again ships a catch-all block as an operator range", () => {
+    const all = Object.values(BOT_RANGES).flat();
+    expect(all).not.toContain("20.0.0.0/8");
+    expect(all).not.toContain("144.76.0.0/16");
+  });
+
+  it("handles CIDR maths for both address families and bad input", () => {
+    expect(ipMatchesCidr("132.196.86.5", "132.196.86.0/24")).toBe(true);
+    expect(ipMatchesCidr("132.196.87.5", "132.196.86.0/24")).toBe(false);
+    expect(ipMatchesCidr("1.2.3.4", "0.0.0.0/0")).toBe(true);
+    expect(ipMatchesCidr("2606:4700::1", "2606:4700::/32")).toBe(true);
+    expect(ipMatchesCidr("2606:4701::1", "2606:4700::/32")).toBe(false);
+    expect(ipMatchesCidr("not-an-ip", "1.2.3.0/24")).toBe(false);
+    expect(ipMatchesCidr("1.2.3.4", "1.2.3.0/99")).toBe(false);
   });
 });
